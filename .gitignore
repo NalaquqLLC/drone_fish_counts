@@ -1,0 +1,30 @@
+# Video files
+*.mp4
+*.avi
+*.mov
+*.mkv
+
+# Extracted frames / dataset images
+dataset/
+raw_videos/
+
+# PyInstaller build artifacts
+scripts/labeler/build/
+scripts/labeler/dist/
+*.spec
+
+# Standalone exe (too large for git)
+FishLabeler.exe
+
+# Python
+__pycache__/
+*.pyc
+
+# Labeler session files
+last_session.json
+progress.json
+labeler_config.json
+
+# OS files
+.DS_Store
+Thumbs.db

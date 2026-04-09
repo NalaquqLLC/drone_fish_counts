@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Fish Labeling Tool</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <header>
+        <h1>Fish Labeling Tool</h1>
+        <div id="progress-bar">
+            <span id="progress-text">Loading...</span>
+            <div id="progress-fill"></div>
+        </div>
+        <a href="/setup" class="header-link" title="Change settings">Setup</a>
+    </header>
+
+    <div id="main-container">
+        <div id="sidebar">
+            <div id="labels-panel">
+                <h3>Labels</h3>
+                <p class="hint">Select a label, then draw a box on the image.</p>
+                {% for class_id, name in labels.items() %}
+                <button class="species-btn" data-class-id="{{ class_id }}"
+                        style="--species-color: {{ colors[class_id] }}">
+                    <span class="color-swatch" style="background: {{ colors[class_id] }}"></span>
+                    {{ name | capitalize }}
+                    <span class="shortcut-key">{{ class_id + 1 }}</span>
+                </button>
+                {% endfor %}
+            </div>
+
+            <div id="annotations-panel">
+                <h3>Annotations</h3>
+                <ul id="annotations-list"></ul>
+                <p id="no-annotations" class="hint">No annotations yet.</p>
+            </div>
+
+            <div id="nav-panel">
+                <button id="btn-prev" title="Previous image (Left arrow)">Prev</button>
+                <span id="image-counter">0 / 0</span>
+                <button id="btn-next" title="Next image (Right arrow)">Next</button>
+            </div>
+
+            <div id="action-panel">
+                <button id="btn-save" class="action-btn save" title="Save annotations (Ctrl+S)">Save</button>
+                <button id="btn-skip" class="action-btn skip" title="Skip this image (S)">Skip</button>
+                <button id="btn-done" class="action-btn done" title="Mark done and go next (Enter)">Done</button>
+            </div>
+
+            <div id="delete-panel">
+                <button id="btn-delete-image" class="action-btn delete-img" title="Delete this image (no fish)">Delete Image (No Fish)</button>
+            </div>
+
+            <div id="export-panel">
+                <button id="btn-export" class="action-btn export" title="Export all to YOLO format">Export YOLO</button>
+            </div>
+
+            <div id="help-panel">
+                <h3>Shortcuts</h3>
+                <ul class="help-list">
+                    <li><kbd>1</kbd>-<kbd>9</kbd> Select label</li>
+                    <li><kbd>Left</kbd>/<kbd>Right</kbd> Navigate</li>
+                    <li><kbd>Ctrl+S</kbd> Save</li>
+                    <li><kbd>Enter</kbd> Done &amp; next</li>
+                    <li><kbd>S</kbd> Skip image</li>
+                    <li><kbd>D</kbd> Delete image</li>
+                    <li><kbd>Del</kbd> Remove selected box</li>
+                    <li><kbd>Esc</kbd> Cancel / deselect</li>
+                </ul>
+            </div>
+        </div>
+
+        <div id="canvas-container">
+            <canvas id="canvas"></canvas>
+            <div id="filename-display"></div>
+            <div id="status-message"></div>
+        </div>
+    </div>
+
+    <script src="/static/labeling.js"></script>
+</body>
+</html>

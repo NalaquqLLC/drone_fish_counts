@@ -1,0 +1,351 @@
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: #1a1a2e;
+    color: #e0e0e0;
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+header {
+    background: #16213e;
+    padding: 10px 20px;
+    display: flex;
+    align-items: center;
+    gap: 20px;
+    border-bottom: 2px solid #0f3460;
+}
+
+header h1 {
+    font-size: 18px;
+    white-space: nowrap;
+    color: #e94560;
+}
+
+.header-link {
+    color: #888;
+    font-size: 13px;
+    text-decoration: none;
+    padding: 6px 12px;
+    border: 1px solid #333;
+    border-radius: 6px;
+    white-space: nowrap;
+}
+.header-link:hover { color: #e0e0e0; border-color: #555; }
+
+#progress-bar {
+    flex: 1;
+    height: 24px;
+    background: #0f3460;
+    border-radius: 12px;
+    position: relative;
+    overflow: hidden;
+}
+
+#progress-fill {
+    height: 100%;
+    background: linear-gradient(90deg, #e94560, #0f3460);
+    border-radius: 12px;
+    transition: width 0.3s ease;
+    width: 0%;
+}
+
+#progress-text {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    font-size: 12px;
+    font-weight: 600;
+    z-index: 1;
+    color: #fff;
+}
+
+#main-container {
+    display: flex;
+    flex: 1;
+    overflow: hidden;
+}
+
+/* --- Sidebar --- */
+
+#sidebar {
+    width: 240px;
+    min-width: 240px;
+    background: #16213e;
+    padding: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    overflow-y: auto;
+    border-right: 2px solid #0f3460;
+}
+
+#sidebar h3 {
+    font-size: 13px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: #888;
+    margin-bottom: 6px;
+}
+
+.hint {
+    font-size: 12px;
+    color: #666;
+    margin-bottom: 4px;
+}
+
+/* Species / label buttons */
+
+.species-btn {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    padding: 8px 10px;
+    margin-bottom: 4px;
+    background: #1a1a2e;
+    border: 2px solid transparent;
+    border-radius: 6px;
+    color: #e0e0e0;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: border-color 0.15s, background 0.15s;
+}
+
+.species-btn:hover {
+    background: #222244;
+}
+
+.species-btn.active {
+    border-color: var(--species-color);
+    background: #222244;
+}
+
+.color-swatch {
+    width: 14px;
+    height: 14px;
+    border-radius: 3px;
+    flex-shrink: 0;
+}
+
+.shortcut-key {
+    margin-left: auto;
+    font-size: 11px;
+    background: #333;
+    padding: 2px 6px;
+    border-radius: 3px;
+    color: #aaa;
+}
+
+/* Annotations list */
+
+#annotations-panel {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+}
+
+#annotations-list {
+    list-style: none;
+}
+
+#annotations-list li {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 8px;
+    margin-bottom: 2px;
+    border-radius: 4px;
+    font-size: 13px;
+    cursor: pointer;
+    transition: background 0.15s;
+}
+
+#annotations-list li:hover {
+    background: #222244;
+}
+
+#annotations-list li.selected {
+    background: #2a2a4e;
+    outline: 1px solid #555;
+}
+
+#annotations-list li .ann-delete {
+    margin-left: auto;
+    background: none;
+    border: none;
+    color: #e94560;
+    cursor: pointer;
+    font-size: 16px;
+    padding: 0 4px;
+    opacity: 0.6;
+}
+
+#annotations-list li .ann-delete:hover {
+    opacity: 1;
+}
+
+/* Navigation */
+
+#nav-panel {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+#nav-panel button {
+    flex: 1;
+    padding: 8px;
+    background: #0f3460;
+    border: none;
+    border-radius: 6px;
+    color: #e0e0e0;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+}
+
+#nav-panel button:hover {
+    background: #1a4a7a;
+}
+
+#image-counter {
+    font-size: 13px;
+    font-weight: 600;
+    white-space: nowrap;
+}
+
+/* Action buttons */
+
+#action-panel, #export-panel, #delete-panel {
+    display: flex;
+    gap: 6px;
+}
+
+.action-btn {
+    flex: 1;
+    padding: 10px 8px;
+    border: none;
+    border-radius: 6px;
+    font-size: 13px;
+    font-weight: 700;
+    cursor: pointer;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.action-btn.save {
+    background: #3cb44b;
+    color: #fff;
+}
+.action-btn.save:hover { background: #2e9a3c; }
+
+.action-btn.skip {
+    background: #555;
+    color: #ddd;
+}
+.action-btn.skip:hover { background: #666; }
+
+.action-btn.done {
+    background: #4363d8;
+    color: #fff;
+}
+.action-btn.done:hover { background: #3050b0; }
+
+.action-btn.delete-img {
+    background: #8b0000;
+    color: #fff;
+    width: 100%;
+}
+.action-btn.delete-img:hover { background: #a50000; }
+
+.action-btn.export {
+    background: #f58231;
+    color: #fff;
+    width: 100%;
+}
+.action-btn.export:hover { background: #d06a20; }
+
+/* Help */
+
+.help-list {
+    list-style: none;
+    font-size: 12px;
+    color: #888;
+}
+
+.help-list li {
+    margin-bottom: 3px;
+}
+
+.help-list kbd {
+    background: #333;
+    padding: 1px 5px;
+    border-radius: 3px;
+    font-family: monospace;
+    font-size: 11px;
+    color: #ccc;
+}
+
+/* --- Canvas area --- */
+
+#canvas-container {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    position: relative;
+    overflow: hidden;
+    background: #111;
+}
+
+#canvas {
+    cursor: crosshair;
+    max-width: 100%;
+    max-height: 100%;
+}
+
+#filename-display {
+    position: absolute;
+    top: 10px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: rgba(0,0,0,0.7);
+    padding: 4px 14px;
+    border-radius: 4px;
+    font-size: 12px;
+    color: #aaa;
+    pointer-events: none;
+}
+
+#status-message {
+    position: absolute;
+    bottom: 16px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: rgba(0,0,0,0.8);
+    padding: 8px 20px;
+    border-radius: 6px;
+    font-size: 13px;
+    font-weight: 600;
+    opacity: 0;
+    transition: opacity 0.3s;
+    pointer-events: none;
+}
+
+#status-message.visible {
+    opacity: 1;
+}
+
+#status-message.success { color: #3cb44b; }
+#status-message.error { color: #e94560; }
+#status-message.info { color: #4363d8; }

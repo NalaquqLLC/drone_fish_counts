@@ -1,0 +1,405 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Fish Labeling Tool — Setup</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            background: #1a1a2e;
+            color: #e0e0e0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+        }
+        .setup-card {
+            background: #16213e;
+            border-radius: 12px;
+            padding: 40px;
+            width: 620px;
+            max-width: 95vw;
+            border: 2px solid #0f3460;
+        }
+        h1 { font-size: 24px; color: #e94560; margin-bottom: 8px; }
+        .subtitle { color: #888; font-size: 14px; margin-bottom: 28px; }
+        .form-group { margin-bottom: 20px; }
+        label {
+            display: block; font-size: 13px; font-weight: 600;
+            text-transform: uppercase; letter-spacing: 1px;
+            color: #888; margin-bottom: 6px;
+        }
+        .dir-row { display: flex; gap: 8px; }
+        input[type="text"] {
+            flex: 1; padding: 12px 14px;
+            background: #1a1a2e; border: 2px solid #0f3460;
+            border-radius: 6px; color: #e0e0e0;
+            font-size: 15px; font-family: monospace;
+        }
+        input[type="text"]:focus { outline: none; border-color: #4363d8; }
+        .btn-browse {
+            padding: 12px 20px; background: #0f3460; border: none;
+            border-radius: 6px; color: #e0e0e0; font-size: 14px;
+            font-weight: 600; cursor: pointer; white-space: nowrap;
+        }
+        .btn-browse:hover { background: #1a4a7a; }
+
+        /* Labels editor */
+        #labels-list { list-style: none; }
+        #labels-list li {
+            display: flex; align-items: center; gap: 8px; margin-bottom: 6px;
+        }
+        #labels-list li .color-dot {
+            width: 16px; height: 16px; border-radius: 4px; flex-shrink: 0;
+        }
+        #labels-list li input {
+            flex: 1; padding: 10px 12px; background: #1a1a2e;
+            border: 2px solid #0f3460; border-radius: 6px;
+            color: #e0e0e0; font-size: 15px;
+        }
+        #labels-list li input:focus { outline: none; border-color: #4363d8; }
+        #labels-list li .btn-remove {
+            background: none; border: none; color: #e94560;
+            font-size: 20px; cursor: pointer; padding: 0 6px; opacity: 0.6;
+        }
+        #labels-list li .btn-remove:hover { opacity: 1; }
+        .btn-add {
+            padding: 8px 16px; background: #222244;
+            border: 2px dashed #0f3460; border-radius: 6px;
+            color: #888; font-size: 14px; cursor: pointer; margin-top: 4px;
+        }
+        .btn-add:hover { border-color: #4363d8; color: #e0e0e0; }
+        .btn-start {
+            width: 100%; padding: 16px; background: #e94560; border: none;
+            border-radius: 8px; color: #fff; font-size: 18px; font-weight: 700;
+            cursor: pointer; text-transform: uppercase; letter-spacing: 1px; margin-top: 16px;
+        }
+        .btn-start:hover { background: #c7374e; }
+        .btn-start:disabled { background: #555; cursor: not-allowed; }
+        .error-msg {
+            background: #3a1525; border: 1px solid #e94560; border-radius: 6px;
+            padding: 10px 14px; font-size: 13px; color: #e94560;
+            margin-bottom: 16px; display: none;
+        }
+        .info-msg {
+            background: #152a3a; border: 1px solid #4363d8; border-radius: 6px;
+            padding: 10px 14px; font-size: 13px; color: #4363d8;
+            margin-bottom: 16px; display: none;
+        }
+
+        /* ── Directory browser modal ── */
+        .modal-overlay {
+            display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0,0,0,0.7); z-index: 100;
+            align-items: center; justify-content: center;
+        }
+        .modal-overlay.open { display: flex; }
+        .modal {
+            background: #16213e; border: 2px solid #0f3460; border-radius: 12px;
+            width: 600px; max-width: 90vw; max-height: 80vh;
+            display: flex; flex-direction: column;
+        }
+        .modal-header {
+            padding: 16px 20px; border-bottom: 1px solid #0f3460;
+            display: flex; align-items: center; gap: 12px;
+        }
+        .modal-header h2 { font-size: 16px; color: #e0e0e0; flex: 1; }
+        .modal-close {
+            background: none; border: none; color: #888; font-size: 22px;
+            cursor: pointer; padding: 0 4px;
+        }
+        .modal-close:hover { color: #e94560; }
+        .modal-path {
+            padding: 10px 20px; background: #1a1a2e;
+            font-family: monospace; font-size: 13px; color: #4363d8;
+            border-bottom: 1px solid #0f3460;
+            word-break: break-all;
+        }
+        .modal-body {
+            flex: 1; overflow-y: auto; padding: 8px 0;
+            min-height: 300px; max-height: 50vh;
+        }
+        .dir-item {
+            display: flex; align-items: center; gap: 10px;
+            padding: 10px 20px; cursor: pointer; font-size: 14px;
+            transition: background 0.1s;
+        }
+        .dir-item:hover { background: #222244; }
+        .dir-item .folder-icon { font-size: 18px; flex-shrink: 0; }
+        .dir-item .dir-name { flex: 1; word-break: break-all; }
+        .dir-item-up { color: #4363d8; font-weight: 600; }
+        .modal-footer {
+            padding: 14px 20px; border-top: 1px solid #0f3460;
+            display: flex; gap: 10px; justify-content: flex-end;
+        }
+        .modal-footer button {
+            padding: 10px 24px; border: none; border-radius: 6px;
+            font-size: 14px; font-weight: 600; cursor: pointer;
+        }
+        .btn-select-dir { background: #3cb44b; color: #fff; }
+        .btn-select-dir:hover { background: #2e9a3c; }
+        .btn-cancel { background: #555; color: #ddd; }
+        .btn-cancel:hover { background: #666; }
+        .empty-msg {
+            padding: 20px; text-align: center; color: #666; font-size: 13px;
+        }
+    </style>
+</head>
+<body>
+    <div class="setup-card">
+        <h1>Fish Labeling Tool</h1>
+        <p class="subtitle">Set up your labeling session. Select directories and define your labels.</p>
+
+        <div id="error-msg" class="error-msg"></div>
+        <div id="info-msg" class="info-msg"></div>
+
+        <div class="form-group">
+            <label>Input Directory (images)</label>
+            <div class="dir-row">
+                <input type="text" id="input-dir" placeholder="/path/to/images">
+                <button class="btn-browse" onclick="openBrowser('input-dir')">Browse</button>
+            </div>
+        </div>
+
+        <div class="form-group">
+            <label>Output Directory (annotations &amp; labels)</label>
+            <div class="dir-row">
+                <input type="text" id="output-dir" placeholder="/path/to/output">
+                <button class="btn-browse" onclick="openBrowser('output-dir')">Browse</button>
+            </div>
+        </div>
+
+        <div class="form-group">
+            <label>Labels (classes)</label>
+            <ul id="labels-list"></ul>
+            <button class="btn-add" onclick="addLabel()">+ Add Label</button>
+        </div>
+
+        <button class="btn-start" id="btn-start" onclick="startSession()">Start Labeling</button>
+    </div>
+
+    <!-- Directory browser modal -->
+    <div class="modal-overlay" id="browser-modal">
+        <div class="modal">
+            <div class="modal-header">
+                <h2>Select Directory</h2>
+                <button class="modal-close" onclick="closeBrowser()">&times;</button>
+            </div>
+            <div class="modal-path" id="browser-path">/</div>
+            <div class="modal-body" id="browser-body"></div>
+            <div class="modal-footer">
+                <button class="btn-cancel" onclick="closeBrowser()">Cancel</button>
+                <button class="btn-select-dir" onclick="selectDir()">Select This Folder</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const PALETTE = [
+            "#e6194b", "#3cb44b", "#4363d8", "#f58231", "#f032e6",
+            "#42d4f4", "#fabed4", "#469990", "#dcbeff", "#9A6324",
+            "#fffac8", "#800000", "#aaffc3", "#808000", "#ffd8b1",
+            "#000075", "#a9a9a9", "#e6beff", "#ffe119", "#bfef45",
+        ];
+
+        // ── Labels ──
+
+        const labelsList = document.getElementById("labels-list");
+        let labels = [];
+
+        function renderLabels() {
+            labelsList.innerHTML = "";
+            labels.forEach((name, i) => {
+                const li = document.createElement("li");
+                const dot = document.createElement("span");
+                dot.className = "color-dot";
+                dot.style.background = PALETTE[i % PALETTE.length];
+                li.appendChild(dot);
+
+                const inp = document.createElement("input");
+                inp.type = "text";
+                inp.value = name;
+                inp.placeholder = `Label ${i + 1}`;
+                inp.addEventListener("input", () => { labels[i] = inp.value; });
+                li.appendChild(inp);
+
+                const btn = document.createElement("button");
+                btn.className = "btn-remove";
+                btn.textContent = "\u00d7";
+                btn.onclick = () => { labels.splice(i, 1); renderLabels(); };
+                li.appendChild(btn);
+
+                labelsList.appendChild(li);
+            });
+        }
+
+        function addLabel(name = "") {
+            labels.push(name);
+            renderLabels();
+            const inputs = labelsList.querySelectorAll("input");
+            if (inputs.length) inputs[inputs.length - 1].focus();
+        }
+
+        ["king", "red", "silver", "chum", "pink"].forEach(n => labels.push(n));
+        renderLabels();
+
+        // ── Directory browser ──
+
+        let browserTarget = null;   // which input to fill: "input-dir" or "output-dir"
+        let browserCurrentPath = "";
+
+        function openBrowser(targetId) {
+            browserTarget = targetId;
+            document.getElementById("browser-modal").classList.add("open");
+            // Start browsing from the current value or root
+            const currentVal = document.getElementById(targetId).value.trim();
+            loadDir(currentVal || "");
+        }
+
+        function closeBrowser() {
+            document.getElementById("browser-modal").classList.remove("open");
+            browserTarget = null;
+        }
+
+        function selectDir() {
+            if (browserTarget && browserCurrentPath) {
+                document.getElementById(browserTarget).value = browserCurrentPath;
+                // Check for existing config if output dir
+                if (browserTarget === "output-dir") {
+                    checkRestore(browserCurrentPath);
+                }
+            }
+            closeBrowser();
+        }
+
+        async function loadDir(path) {
+            const body = document.getElementById("browser-body");
+            body.innerHTML = '<div class="empty-msg">Loading...</div>';
+
+            try {
+                const resp = await fetch("/api/list-dir", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ path }),
+                });
+                const data = await resp.json();
+
+                if (data.error) {
+                    body.innerHTML = `<div class="empty-msg">${data.error}</div>`;
+                    return;
+                }
+
+                browserCurrentPath = data.path || "";
+                document.getElementById("browser-path").textContent = browserCurrentPath || "(select a drive)";
+
+                body.innerHTML = "";
+
+                // Up button
+                if (!data.is_root && data.parent !== undefined) {
+                    const up = document.createElement("div");
+                    up.className = "dir-item dir-item-up";
+                    up.innerHTML = '<span class="folder-icon">..</span><span class="dir-name">Go Up</span>';
+                    up.addEventListener("click", () => loadDir(data.parent));
+                    body.appendChild(up);
+                }
+
+                if (data.dirs.length === 0) {
+                    const empty = document.createElement("div");
+                    empty.className = "empty-msg";
+                    empty.textContent = "No subdirectories";
+                    body.appendChild(empty);
+                }
+
+                for (const dir of data.dirs) {
+                    const item = document.createElement("div");
+                    item.className = "dir-item";
+                    // Show just the last part of the path as the name
+                    const parts = dir.replace(/\\/g, "/").split("/");
+                    const displayName = parts[parts.length - 1] || dir;
+                    item.innerHTML = `<span class="folder-icon">&#128193;</span><span class="dir-name">${displayName}</span>`;
+                    item.addEventListener("click", () => loadDir(dir));
+                    body.appendChild(item);
+                }
+            } catch (e) {
+                body.innerHTML = `<div class="empty-msg">Error loading directory: ${e.message}</div>`;
+            }
+        }
+
+        // ── Restore previous session ──
+
+        async function checkRestore(outputDir) {
+            try {
+                const resp = await fetch(`/api/restore?output_dir=${encodeURIComponent(outputDir)}`);
+                const data = await resp.json();
+                if (data.found && data.config) {
+                    const cfg = data.config;
+                    document.getElementById("input-dir").value = cfg.input_dir || "";
+                    labels = Object.values(cfg.labels || {});
+                    renderLabels();
+                    showInfo("Found existing session config — restored settings. Click Start to resume.");
+                }
+            } catch (e) { /* ignore */ }
+        }
+
+        document.getElementById("output-dir").addEventListener("change", (e) => {
+            if (e.target.value.trim()) checkRestore(e.target.value.trim());
+        });
+
+        // ── Messages ──
+
+        function showError(msg) {
+            const el = document.getElementById("error-msg");
+            el.textContent = msg;
+            el.style.display = "block";
+            setTimeout(() => { el.style.display = "none"; }, 5000);
+        }
+
+        function showInfo(msg) {
+            const el = document.getElementById("info-msg");
+            el.textContent = msg;
+            el.style.display = "block";
+        }
+
+        // ── Start session ──
+
+        async function startSession() {
+            const inputDir = document.getElementById("input-dir").value.trim();
+            const outputDir = document.getElementById("output-dir").value.trim();
+            const cleanLabels = labels.map(l => l.trim()).filter(l => l);
+
+            if (!inputDir) { showError("Input directory is required"); return; }
+            if (!outputDir) { showError("Output directory is required"); return; }
+            if (cleanLabels.length === 0) { showError("Add at least one label"); return; }
+
+            document.getElementById("btn-start").disabled = true;
+            document.getElementById("btn-start").textContent = "Loading...";
+
+            try {
+                const resp = await fetch("/api/setup", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                        input_dir: inputDir,
+                        output_dir: outputDir,
+                        labels: cleanLabels,
+                    }),
+                });
+                const data = await resp.json();
+                if (data.error) {
+                    showError(data.error);
+                    document.getElementById("btn-start").disabled = false;
+                    document.getElementById("btn-start").textContent = "Start Labeling";
+                    return;
+                }
+                window.location.href = "/label";
+            } catch (e) {
+                showError("Failed to start session: " + e.message);
+                document.getElementById("btn-start").disabled = false;
+                document.getElementById("btn-start").textContent = "Start Labeling";
+            }
+        }
+    </script>
+</body>
+</html>
