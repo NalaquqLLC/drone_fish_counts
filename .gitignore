@@ -5,8 +5,12 @@
 *.mkv
 
 # Extracted frames / dataset images
+data/
 dataset/
 raw_videos/
+
+# Labeling tool output (auto-created beside the app)
+scripts/labeler/labeling_output/
 
 # PyInstaller build artifacts
 scripts/labeler/build/

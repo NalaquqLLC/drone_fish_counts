@@ -2,10 +2,11 @@
 Standalone salmon labeling tool for YOLO training data.
 
 Provides a web UI with:
-- Setup screen for selecting input/output directories and defining labels
+- Setup screen for selecting the input directory and defining labels
+  (outputs are written to a fixed `labeling_output/` folder next to the app)
 - Image review with delete capability (remove photos without fish)
-- Bounding box annotation with user-defined labels
-- YOLO-format export
+- Bounding box and polygon segmentation mask annotation with user-defined labels
+- YOLO detection and YOLO-seg format export
 """
 
 import json
@@ -36,6 +37,11 @@ def _app_dir() -> Path:
     return Path(__file__).parent
 
 
+def _default_output_dir() -> Path:
+    """Fixed output directory, always sibling to the app or .exe."""
+    return _app_dir() / "labeling_output"
+
+
 def create_app():
     """Create the Flask labeling application."""
     app = Flask(__name__)
@@ -56,9 +62,14 @@ def create_app():
         s = _session()
         _last_session_path().write_text(json.dumps({
             "input_dir": s["input_dir"],
-            "output_dir": s["output_dir"],
             "labels": s["labels"],
         }, indent=2))
+
+    def _ensure_output_dirs(output_dir: Path) -> None:
+        output_dir.mkdir(parents=True, exist_ok=True)
+        (output_dir / "annotations").mkdir(exist_ok=True)
+        (output_dir / "labels").mkdir(exist_ok=True)
+        (output_dir / "deleted").mkdir(exist_ok=True)
 
     def _restore_last_session() -> bool:
         """Try to restore the previous session. Returns True if successful."""
@@ -68,22 +79,18 @@ def create_app():
         try:
             cfg = json.loads(p.read_text())
             input_dir = cfg.get("input_dir", "")
-            output_dir = cfg.get("output_dir", "")
             labels_raw = cfg.get("labels", {})
             if not input_dir or not Path(input_dir).is_dir() or not labels_raw:
                 return False
             labels = {int(k): v for k, v in labels_raw.items()}
             colors = {i: PALETTE[i % len(PALETTE)] for i in range(len(labels))}
+            output_dir = _default_output_dir()
             s = _session()
             s["input_dir"] = input_dir
-            s["output_dir"] = output_dir
+            s["output_dir"] = str(output_dir)
             s["labels"] = labels
             s["colors"] = colors
-            # Ensure output dirs exist
-            Path(output_dir).mkdir(parents=True, exist_ok=True)
-            (Path(output_dir) / "annotations").mkdir(exist_ok=True)
-            (Path(output_dir) / "labels").mkdir(exist_ok=True)
-            (Path(output_dir) / "deleted").mkdir(exist_ok=True)
+            _ensure_output_dirs(output_dir)
             return True
         except (json.JSONDecodeError, KeyError, ValueError):
             return False
@@ -134,7 +141,6 @@ def create_app():
         s = _session()
         config_data = json.dumps({
             "input_dir": s["input_dir"],
-            "output_dir": s["output_dir"],
             "labels": s["labels"],
         }, indent=2)
         _config_path().write_text(config_data)
@@ -165,13 +171,24 @@ def create_app():
         _export_yolo(filename, annotations)
 
     def _export_yolo(filename: str, annotations: list[dict]) -> None:
-        """Write YOLO-format label file from annotations."""
+        """Write YOLO-format label file from annotations.
+
+        Box annotations emit YOLO detection format: `class cx cy w h`.
+        Polygon annotations emit YOLO-seg format: `class x1 y1 x2 y2 ...`.
+        """
         lines = []
         for ann in annotations:
             cls = ann["class_id"]
-            x = ann["x"] + ann["w"] / 2
-            y = ann["y"] + ann["h"] / 2
-            lines.append(f"{cls} {x:.6f} {y:.6f} {ann['w']:.6f} {ann['h']:.6f}")
+            if ann.get("type") == "polygon":
+                pts = ann.get("points", [])
+                if len(pts) < 3:
+                    continue
+                coords = " ".join(f"{p[0]:.6f} {p[1]:.6f}" for p in pts)
+                lines.append(f"{cls} {coords}")
+            else:
+                x = ann["x"] + ann["w"] / 2
+                y = ann["y"] + ann["h"] / 2
+                lines.append(f"{cls} {x:.6f} {y:.6f} {ann['w']:.6f} {ann['h']:.6f}")
         _label_path(filename).write_text("\n".join(lines) + "\n" if lines else "")
 
     # ─── Routes ───
@@ -190,41 +207,31 @@ def create_app():
     def api_setup():
         data = request.get_json()
         input_dir = data.get("input_dir", "").strip()
-        output_dir = data.get("output_dir", "").strip()
         labels = data.get("labels", [])
 
         if not input_dir or not Path(input_dir).is_dir():
             return jsonify({"error": f"Input directory not found: {input_dir}"}), 400
-        if not output_dir:
-            return jsonify({"error": "Output directory is required"}), 400
         if not labels:
             return jsonify({"error": "At least one label is required"}), 400
 
-        # Clean labels
         labels = [l.strip() for l in labels if l.strip()]
         if not labels:
             return jsonify({"error": "At least one non-empty label is required"}), 400
 
-        # Assign colors
         colors = {i: PALETTE[i % len(PALETTE)] for i in range(len(labels))}
+        output_dir = _default_output_dir()
 
-        # Set session
         s = _session()
         s["input_dir"] = str(Path(input_dir).resolve())
-        s["output_dir"] = str(Path(output_dir).resolve())
+        s["output_dir"] = str(output_dir)
         s["labels"] = {i: name for i, name in enumerate(labels)}
         s["colors"] = colors
 
-        # Create output dirs
-        _output_path().mkdir(parents=True, exist_ok=True)
-        _annotations_dir().mkdir(exist_ok=True)
-        _labels_dir().mkdir(exist_ok=True)
-        _deleted_dir().mkdir(exist_ok=True)
-
+        _ensure_output_dirs(output_dir)
         _save_config()
 
         image_count = len(_list_images())
-        return jsonify({"status": "ok", "image_count": image_count})
+        return jsonify({"status": "ok", "image_count": image_count, "output_dir": str(output_dir)})
 
     @app.route("/api/list-dir", methods=["POST"])
     def api_list_dir():
@@ -270,17 +277,21 @@ def create_app():
         parent = str(p.parent) if str(p.parent) != str(p) else ""
         return jsonify({"path": str(p), "dirs": dirs, "parent": parent, "is_root": False})
 
-    @app.route("/api/restore", methods=["GET"])
-    def api_restore():
-        """Check if a previous config exists in a given output dir."""
-        output_dir = request.args.get("output_dir", "").strip()
-        if not output_dir:
-            return jsonify({"found": False})
-        config_path = Path(output_dir) / "labeler_config.json"
-        if config_path.exists():
-            config = json.loads(config_path.read_text())
-            return jsonify({"found": True, "config": config})
-        return jsonify({"found": False})
+    @app.route("/api/current-config", methods=["GET"])
+    def api_current_config():
+        """Return the active session config, if any, so the setup page can pre-fill."""
+        s = _session()
+        output_dir = str(_default_output_dir())
+        if _is_configured():
+            return jsonify({
+                "found": True,
+                "config": {
+                    "input_dir": s["input_dir"],
+                    "labels": s["labels"],
+                },
+                "output_dir": output_dir,
+            })
+        return jsonify({"found": False, "output_dir": output_dir})
 
     @app.route("/label")
     def label_page():

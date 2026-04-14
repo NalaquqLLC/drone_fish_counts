@@ -102,6 +102,36 @@ header h1 {
     margin-bottom: 4px;
 }
 
+/* Mode toggle */
+
+#mode-toggle {
+    display: flex;
+    gap: 6px;
+    margin-bottom: 12px;
+}
+
+.mode-btn {
+    flex: 1;
+    padding: 6px 10px;
+    background: #1a1a2e;
+    border: 2px solid transparent;
+    border-radius: 6px;
+    color: #e0e0e0;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: border-color 0.15s, background 0.15s;
+}
+
+.mode-btn:hover {
+    background: #222244;
+}
+
+.mode-btn.active {
+    border-color: #4af;
+    background: #222244;
+}
+
 /* Species / label buttons */
 
 .species-btn {

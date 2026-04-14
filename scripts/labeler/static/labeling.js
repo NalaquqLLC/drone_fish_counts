@@ -1,4 +1,4 @@
-// Fish Labeling Tool — Canvas-based bounding box annotation
+// Fish Labeling Tool — Canvas-based bounding box and polygon mask annotation
 
 const LABELS = {};
 const COLORS = {};
@@ -19,20 +19,32 @@ let selectedClassId = 0;
 let selectedAnnId = null;
 let isDirty = false;
 
-// Drawing state
+// Tool mode: "box" or "polygon"
+let toolMode = "box";
+
+// Drawing state (box)
 let isDrawing = false;
 let drawStart = null;
 let drawCurrent = null;
 
-// Resize state
+// Resize state (box)
 let isResizing = false;
 let resizeHandle = null;
 let resizeAnn = null;
 
-// Move state
+// Move state (box)
 let isMoving = false;
 let moveAnn = null;
 let moveOffset = null;
+
+// Polygon in-progress state
+let polyPoints = [];        // normalized [[x, y], ...] for the polygon being drawn
+let polyHoverPos = null;    // canvas-pixel position of the cursor, for rubber band
+
+// Polygon vertex drag state
+let isVertexDragging = false;
+let vertexDragAnn = null;
+let vertexDragIdx = -1;
 
 // Image and canvas
 const canvas = document.getElementById("canvas");
@@ -140,7 +152,11 @@ function render() {
     ctx.drawImage(img, ir.x, ir.y, ir.w, ir.h);
 
     for (const ann of annotations) {
-        drawBox(ann, ann.id === selectedAnnId);
+        if (ann.type === "polygon") {
+            drawPolygon(ann, ann.id === selectedAnnId);
+        } else {
+            drawBox(ann, ann.id === selectedAnnId);
+        }
     }
 
     if (isDrawing && drawStart && drawCurrent) {
@@ -153,6 +169,10 @@ function render() {
         ctx.setLineDash([6, 3]);
         ctx.strokeRect(x, y, w, h);
         ctx.setLineDash([]);
+    }
+
+    if (toolMode === "polygon" && polyPoints.length > 0) {
+        drawInProgressPolygon();
     }
 
     // Zoom indicator
@@ -206,6 +226,85 @@ function drawBox(ann, selected) {
     }
 }
 
+function drawPolygon(ann, selected) {
+    const ir = getImageRect();
+    const pts = ann.points || [];
+    if (pts.length < 2) return;
+    const color = COLORS[ann.class_id] || "#fff";
+
+    ctx.beginPath();
+    ctx.moveTo(ir.x + pts[0][0] * ir.w, ir.y + pts[0][1] * ir.h);
+    for (let i = 1; i < pts.length; i++) {
+        ctx.lineTo(ir.x + pts[i][0] * ir.w, ir.y + pts[i][1] * ir.h);
+    }
+    ctx.closePath();
+
+    ctx.fillStyle = color + "33";
+    ctx.fill();
+    ctx.strokeStyle = color;
+    ctx.lineWidth = selected ? 3 : 2;
+    ctx.stroke();
+
+    // Label at topmost vertex
+    let topIdx = 0;
+    for (let i = 1; i < pts.length; i++) {
+        if (pts[i][1] < pts[topIdx][1]) topIdx = i;
+    }
+    const lx = ir.x + pts[topIdx][0] * ir.w;
+    const ly = ir.y + pts[topIdx][1] * ir.h;
+    const label = LABELS[ann.class_id] || `class ${ann.class_id}`;
+    ctx.font = "bold 13px sans-serif";
+    const textW = ctx.measureText(label).width + 8;
+    ctx.fillStyle = color;
+    ctx.fillRect(lx, ly - 20, textW, 20);
+    ctx.fillStyle = "#fff";
+    ctx.fillText(label, lx + 4, ly - 6);
+
+    // Vertex handles when selected
+    if (selected) {
+        const hs = 8;
+        ctx.fillStyle = "#fff";
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 2;
+        for (const [nx, ny] of pts) {
+            const px = ir.x + nx * ir.w;
+            const py = ir.y + ny * ir.h;
+            ctx.fillRect(px - hs/2, py - hs/2, hs, hs);
+            ctx.strokeRect(px - hs/2, py - hs/2, hs, hs);
+        }
+    }
+}
+
+function drawInProgressPolygon() {
+    const ir = getImageRect();
+    const color = COLORS[selectedClassId];
+
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 2;
+    ctx.setLineDash([6, 3]);
+    ctx.beginPath();
+    for (let i = 0; i < polyPoints.length; i++) {
+        const [nx, ny] = polyPoints[i];
+        const px = ir.x + nx * ir.w;
+        const py = ir.y + ny * ir.h;
+        if (i === 0) ctx.moveTo(px, py);
+        else ctx.lineTo(px, py);
+    }
+    if (polyHoverPos) ctx.lineTo(polyHoverPos.x, polyHoverPos.y);
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    // Point markers
+    ctx.fillStyle = color;
+    for (const [nx, ny] of polyPoints) {
+        const px = ir.x + nx * ir.w;
+        const py = ir.y + ny * ir.h;
+        ctx.beginPath();
+        ctx.arc(px, py, 4, 0, Math.PI * 2);
+        ctx.fill();
+    }
+}
+
 // --- Annotations list ---
 
 function renderAnnotationsList() {
@@ -222,7 +321,9 @@ function renderAnnotationsList() {
         li.appendChild(swatch);
 
         const text = document.createElement("span");
-        text.textContent = LABELS[ann.class_id] || `class ${ann.class_id}`;
+        const name = LABELS[ann.class_id] || `class ${ann.class_id}`;
+        const suffix = ann.type === "polygon" ? " (mask)" : "";
+        text.textContent = name + suffix;
         li.appendChild(text);
 
         const del = document.createElement("button");
@@ -289,6 +390,7 @@ function hitTestBox(px, py) {
     const ny = n.y;
     for (let i = annotations.length - 1; i >= 0; i--) {
         const ann = annotations[i];
+        if (ann.type === "polygon") continue;
         if (nx >= ann.x && nx <= ann.x + ann.w &&
             ny >= ann.y && ny <= ann.y + ann.h) {
             return ann;
@@ -297,15 +399,75 @@ function hitTestBox(px, py) {
     return null;
 }
 
+function pointInPolygon(nx, ny, pts) {
+    let inside = false;
+    for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
+        const xi = pts[i][0], yi = pts[i][1];
+        const xj = pts[j][0], yj = pts[j][1];
+        const intersect = ((yi > ny) !== (yj > ny)) &&
+            (nx < (xj - xi) * (ny - yi) / (yj - yi + 1e-12) + xi);
+        if (intersect) inside = !inside;
+    }
+    return inside;
+}
+
+function hitTestPolygon(px, py) {
+    const n = canvasToNorm(px, py);
+    for (let i = annotations.length - 1; i >= 0; i--) {
+        const ann = annotations[i];
+        if (ann.type !== "polygon") continue;
+        if (pointInPolygon(n.x, n.y, ann.points || [])) return ann;
+    }
+    return null;
+}
+
+function hitTestVertex(px, py) {
+    if (!selectedAnnId) return null;
+    const ann = annotations.find(a => a.id === selectedAnnId);
+    if (!ann || ann.type !== "polygon") return null;
+
+    const ir = getImageRect();
+    const r = 10;
+    for (let i = 0; i < ann.points.length; i++) {
+        const [nx, ny] = ann.points[i];
+        const cx = ir.x + nx * ir.w;
+        const cy = ir.y + ny * ir.h;
+        if (Math.abs(px - cx) < r && Math.abs(py - cy) < r) {
+            return { ann, idx: i };
+        }
+    }
+    return null;
+}
+
 canvas.addEventListener("mousedown", (e) => {
     if (e.button !== 0) return;
+    // Ctrl+drag pan handler runs in its own capture-phase listener below.
+    if (e.ctrlKey && zoom > 1) return;
     const pos = getMousePos(e);
+
+    // Vertex drag for selected polygon
+    const vertexHit = hitTestVertex(pos.x, pos.y);
+    if (vertexHit) {
+        isVertexDragging = true;
+        vertexDragAnn = vertexHit.ann;
+        vertexDragIdx = vertexHit.idx;
+        return;
+    }
 
     const handleHit = hitTestHandles(pos.x, pos.y);
     if (handleHit) {
         isResizing = true;
         resizeHandle = handleHit.handle;
         resizeAnn = handleHit.ann;
+        return;
+    }
+
+    // Click on an existing polygon selects it
+    const polyHit = hitTestPolygon(pos.x, pos.y);
+    if (polyHit) {
+        selectedAnnId = polyHit.id;
+        render();
+        renderAnnotationsList();
         return;
     }
 
@@ -327,6 +489,17 @@ canvas.addEventListener("mousedown", (e) => {
         return;
     }
 
+    // Empty area — tool-dependent behavior
+    if (toolMode === "polygon") {
+        const norm = canvasToNorm(pos.x, pos.y);
+        // Only add the point if it's within the image bounds
+        if (norm.x < 0 || norm.x > 1 || norm.y < 0 || norm.y > 1) return;
+        polyPoints.push([norm.x, norm.y]);
+        selectedAnnId = null;
+        render();
+        return;
+    }
+
     selectedAnnId = null;
     isDrawing = true;
     drawStart = { ...pos };
@@ -336,6 +509,22 @@ canvas.addEventListener("mousedown", (e) => {
 
 canvas.addEventListener("mousemove", (e) => {
     const pos = getMousePos(e);
+
+    if (isVertexDragging && vertexDragAnn) {
+        const norm = canvasToNorm(pos.x, pos.y);
+        vertexDragAnn.points[vertexDragIdx] = [
+            Math.max(0, Math.min(1, norm.x)),
+            Math.max(0, Math.min(1, norm.y)),
+        ];
+        isDirty = true;
+        render();
+        return;
+    }
+
+    if (toolMode === "polygon" && polyPoints.length > 0) {
+        polyHoverPos = { ...pos };
+        render();
+    }
 
     if (isDrawing) {
         drawCurrent = { ...pos };
@@ -375,7 +564,10 @@ canvas.addEventListener("mousemove", (e) => {
 
     // Cursor updates
     const handleHit = hitTestHandles(pos.x, pos.y);
-    if (handleHit) {
+    const vertexHit = hitTestVertex(pos.x, pos.y);
+    if (vertexHit) {
+        canvas.style.cursor = "grab";
+    } else if (handleHit) {
         const cursors = { nw: "nw-resize", ne: "ne-resize", sw: "sw-resize", se: "se-resize" };
         canvas.style.cursor = cursors[handleHit.handle];
     } else if (hitTestBox(pos.x, pos.y)?.id === selectedAnnId && selectedAnnId) {
@@ -426,7 +618,36 @@ canvas.addEventListener("mouseup", (e) => {
         moveOffset = null;
         return;
     }
+
+    if (isVertexDragging) {
+        isVertexDragging = false;
+        vertexDragAnn = null;
+        vertexDragIdx = -1;
+        return;
+    }
 });
+
+function finalizePolygon() {
+    if (polyPoints.length < 3) {
+        polyPoints = [];
+        polyHoverPos = null;
+        render();
+        return;
+    }
+    const id = Math.random().toString(36).substring(2, 10);
+    annotations.push({
+        id,
+        class_id: selectedClassId,
+        type: "polygon",
+        points: polyPoints.slice(),
+    });
+    selectedAnnId = id;
+    polyPoints = [];
+    polyHoverPos = null;
+    isDirty = true;
+    render();
+    renderAnnotationsList();
+}
 
 // --- Scroll zoom and pan ---
 
@@ -473,8 +694,14 @@ window.addEventListener("mouseup", (e) => {
     }
 });
 
-// Double-click to reset zoom
+// Double-click: finalize polygon if drawing one, else reset zoom
 canvas.addEventListener("dblclick", () => {
+    if (toolMode === "polygon" && polyPoints.length > 0) {
+        // Drop the duplicate point added by the preceding single-click
+        if (polyPoints.length >= 2) polyPoints.pop();
+        finalizePolygon();
+        return;
+    }
     zoom = 1;
     panX = 0;
     panY = 0;
@@ -569,6 +796,24 @@ function showStatus(msg, type) {
 }
 
 // --- Button handlers ---
+
+function setToolMode(mode) {
+    if (mode !== "box" && mode !== "polygon") return;
+    // Cancel any in-progress polygon when switching away
+    if (toolMode === "polygon" && mode !== "polygon") {
+        polyPoints = [];
+        polyHoverPos = null;
+    }
+    toolMode = mode;
+    document.querySelectorAll(".mode-btn").forEach(b => {
+        b.classList.toggle("active", b.dataset.mode === mode);
+    });
+    render();
+}
+
+document.querySelectorAll(".mode-btn").forEach(btn => {
+    btn.addEventListener("click", () => setToolMode(btn.dataset.mode));
+});
 
 document.querySelectorAll(".species-btn").forEach(btn => {
     btn.addEventListener("click", () => {
@@ -666,8 +911,21 @@ document.addEventListener("keydown", (e) => {
         return;
     }
 
+    if (e.key === "b" && !e.ctrlKey && !e.metaKey) {
+        setToolMode("box");
+        return;
+    }
+    if (e.key === "p" && !e.ctrlKey && !e.metaKey) {
+        setToolMode("polygon");
+        return;
+    }
+
     if (e.key === "Enter") {
         e.preventDefault();
+        if (toolMode === "polygon" && polyPoints.length > 0) {
+            finalizePolygon();
+            return;
+        }
         document.getElementById("btn-done").click();
         return;
     }
@@ -683,7 +941,10 @@ document.addEventListener("keydown", (e) => {
             isDrawing = false;
             drawStart = null;
             drawCurrent = null;
-            render();
+        }
+        if (polyPoints.length > 0) {
+            polyPoints = [];
+            polyHoverPos = null;
         }
         selectedAnnId = null;
         render();

@@ -88,6 +88,14 @@
             padding: 10px 14px; font-size: 13px; color: #4363d8;
             margin-bottom: 16px; display: none;
         }
+        .output-display {
+            padding: 12px 14px; background: #1a1a2e; border: 2px dashed #0f3460;
+            border-radius: 6px; color: #aac;
+            font-size: 14px; font-family: monospace; word-break: break-all;
+        }
+        .hint-text {
+            font-size: 12px; color: #777; margin-top: 6px;
+        }
 
         /* ── Directory browser modal ── */
         .modal-overlay {
@@ -164,11 +172,9 @@
         </div>
 
         <div class="form-group">
-            <label>Output Directory (annotations &amp; labels)</label>
-            <div class="dir-row">
-                <input type="text" id="output-dir" placeholder="/path/to/output">
-                <button class="btn-browse" onclick="openBrowser('output-dir')">Browse</button>
-            </div>
+            <label>Output Directory (auto-managed)</label>
+            <div id="output-dir-display" class="output-display">Loading…</div>
+            <p class="hint-text">Annotations, labels, and deleted images are written to this folder alongside the app. It's created automatically the first time you start a session.</p>
         </div>
 
         <div class="form-group">
@@ -247,13 +253,12 @@
 
         // ── Directory browser ──
 
-        let browserTarget = null;   // which input to fill: "input-dir" or "output-dir"
+        let browserTarget = null;   // which input to fill (currently only "input-dir")
         let browserCurrentPath = "";
 
         function openBrowser(targetId) {
             browserTarget = targetId;
             document.getElementById("browser-modal").classList.add("open");
-            // Start browsing from the current value or root
             const currentVal = document.getElementById(targetId).value.trim();
             loadDir(currentVal || "");
         }
@@ -266,10 +271,6 @@
         function selectDir() {
             if (browserTarget && browserCurrentPath) {
                 document.getElementById(browserTarget).value = browserCurrentPath;
-                // Check for existing config if output dir
-                if (browserTarget === "output-dir") {
-                    checkRestore(browserCurrentPath);
-                }
             }
             closeBrowser();
         }
@@ -327,25 +328,25 @@
             }
         }
 
-        // ── Restore previous session ──
+        // ── Load current/previous session from server ──
 
-        async function checkRestore(outputDir) {
+        async function loadCurrentConfig() {
             try {
-                const resp = await fetch(`/api/restore?output_dir=${encodeURIComponent(outputDir)}`);
+                const resp = await fetch("/api/current-config");
                 const data = await resp.json();
+                document.getElementById("output-dir-display").textContent =
+                    data.output_dir || "(unknown)";
                 if (data.found && data.config) {
                     const cfg = data.config;
                     document.getElementById("input-dir").value = cfg.input_dir || "";
                     labels = Object.values(cfg.labels || {});
                     renderLabels();
-                    showInfo("Found existing session config — restored settings. Click Start to resume.");
+                    showInfo("Previous session restored — click Start to continue, or change settings below.");
                 }
             } catch (e) { /* ignore */ }
         }
 
-        document.getElementById("output-dir").addEventListener("change", (e) => {
-            if (e.target.value.trim()) checkRestore(e.target.value.trim());
-        });
+        loadCurrentConfig();
 
         // ── Messages ──
 
@@ -366,11 +367,9 @@
 
         async function startSession() {
             const inputDir = document.getElementById("input-dir").value.trim();
-            const outputDir = document.getElementById("output-dir").value.trim();
             const cleanLabels = labels.map(l => l.trim()).filter(l => l);
 
             if (!inputDir) { showError("Input directory is required"); return; }
-            if (!outputDir) { showError("Output directory is required"); return; }
             if (cleanLabels.length === 0) { showError("Add at least one label"); return; }
 
             document.getElementById("btn-start").disabled = true;
@@ -382,7 +381,6 @@
                     headers: { "Content-Type": "application/json" },
                     body: JSON.stringify({
                         input_dir: inputDir,
-                        output_dir: outputDir,
                         labels: cleanLabels,
                     }),
                 });

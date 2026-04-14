@@ -18,9 +18,17 @@
 
     <div id="main-container">
         <div id="sidebar">
+            <div id="mode-panel">
+                <h3>Tool</h3>
+                <div id="mode-toggle">
+                    <button class="mode-btn active" data-mode="box" title="Bounding box (B)">Box</button>
+                    <button class="mode-btn" data-mode="polygon" title="Polygon mask (P)">Polygon</button>
+                </div>
+            </div>
+
             <div id="labels-panel">
                 <h3>Labels</h3>
-                <p class="hint">Select a label, then draw a box on the image.</p>
+                <p class="hint">Select a label, then draw on the image. In polygon mode, click to add points; double-click or Enter to finish.</p>
                 {% for class_id, name in labels.items() %}
                 <button class="species-btn" data-class-id="{{ class_id }}"
                         style="--species-color: {{ colors[class_id] }}">
@@ -60,6 +68,7 @@
             <div id="help-panel">
                 <h3>Shortcuts</h3>
                 <ul class="help-list">
+                    <li><kbd>B</kbd>/<kbd>P</kbd> Box / Polygon mode</li>
                     <li><kbd>1</kbd>-<kbd>9</kbd> Select label</li>
                     <li><kbd>Left</kbd>/<kbd>Right</kbd> Navigate</li>
                     <li><kbd>Ctrl+S</kbd> Save</li>
