@@ -1,65 +1,58 @@
 #!/usr/bin/env python3
-"""Extract frames from fish count/species videos at 1 fps as PNG images."""
+"""Extract frames from video files as PNG images.
 
-import subprocess
+Thin CLI wrapper around `labeler/video_utils.py`. Most users will drive this
+through the FishLabeler app's "Prepare Dataset" screen; use this script when
+you want to automate extraction from the command line.
+
+Examples:
+    # Extract at 1 fps from every video in a folder
+    python extract_frames.py --input /path/to/videos --output /path/to/frames
+
+    # Pick a different frame rate and flatten per-video subfolders
+    python extract_frames.py -i videos -o frames --fps 2 --flatten
+"""
+
+import argparse
 import sys
 from pathlib import Path
 
-BASE_DIR = Path("/mnt/d/AOOS Files")
+# Make the labeler module importable without installing the package.
+sys.path.insert(0, str(Path(__file__).parent / "labeler"))
 
-SOURCES = [
-    ("Count only", "count_only"),
-    ("Species", "species"),
-]
-
-
-def extract_frames(video_path: Path, output_dir: Path) -> int:
-    """Extract frames at 1 fps from a single video. Returns frame count."""
-    # Create a subfolder per video (strip extension)
-    video_name = video_path.stem
-    dest = output_dir / video_name
-    dest.mkdir(parents=True, exist_ok=True)
-
-    cmd = [
-        "ffmpeg",
-        "-i", str(video_path),
-        "-vf", "fps=1",
-        "-q:v", "1",
-        str(dest / f"{video_name}_%04d.png"),
-        "-y",
-        "-loglevel", "warning",
-    ]
-
-    result = subprocess.run(cmd, capture_output=True, text=True)
-    if result.returncode != 0:
-        print(f"  ERROR: {result.stderr.strip()}")
-        return 0
-
-    frame_count = len(list(dest.glob("*.png")))
-    return frame_count
+from video_utils import extract_batch, flatten_output  # noqa: E402
 
 
 def main():
-    total_frames = 0
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("-i", "--input", required=True, help="Directory containing video files")
+    parser.add_argument("-o", "--output", required=True, help="Directory to write extracted PNGs")
+    parser.add_argument("--fps", type=float, default=1.0, help="Frames per second to extract (default: 1)")
+    parser.add_argument("--flatten", action="store_true", help="After extraction, move all PNGs into the output root")
+    args = parser.parse_args()
 
-    for source_name, output_name in SOURCES:
-        source_dir = BASE_DIR / source_name
-        output_dir = BASE_DIR / "frames" / output_name
+    input_dir = Path(args.input).expanduser().resolve()
+    output_dir = Path(args.output).expanduser().resolve()
 
-        videos = sorted(source_dir.glob("*.mp4"))
-        if not videos:
-            print(f"No .mp4 files found in {source_dir}")
-            continue
+    if not input_dir.is_dir():
+        print(f"ERROR: input directory not found: {input_dir}", file=sys.stderr)
+        sys.exit(1)
 
-        print(f"\n=== {source_name} ({len(videos)} videos) ===")
+    def on_progress(state):
+        pct = int(state["overall_progress"] * 100)
+        print(f"  [{pct:3d}%] {state['message']}", flush=True)
 
-        for video in videos:
-            print(f"  Processing: {video.name} ...", end=" ", flush=True)
-            count = extract_frames(video, output_dir)
-            total_frames += count
-            print(f"{count} frames")
+    try:
+        summary = extract_batch(input_dir, output_dir, fps=args.fps, progress_callback=on_progress)
+    except RuntimeError as e:
+        print(f"ERROR: {e}", file=sys.stderr)
+        sys.exit(1)
 
-    print(f"\nDone. Total frames extracted: {total_frames}")
+    if args.flatten:
+        moved = flatten_output(output_dir)
+        print(f"Flattened {moved} files into {output_dir}")
+
+    print(f"\nDone. {summary['video_count']} videos, {summary['total_frames']} frames → {summary['output_dir']}")
 
 
 if __name__ == "__main__":

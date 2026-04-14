@@ -1,0 +1,459 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Fish Labeling Tool — Prepare Dataset</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            background: #1a1a2e;
+            color: #e0e0e0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            padding: 24px;
+        }
+        .card {
+            background: #16213e;
+            border-radius: 12px;
+            padding: 36px;
+            width: 680px;
+            max-width: 95vw;
+            border: 2px solid #0f3460;
+        }
+        .breadcrumb {
+            font-size: 13px; color: #667; margin-bottom: 14px;
+        }
+        .breadcrumb a { color: #4363d8; text-decoration: none; }
+        .breadcrumb a:hover { text-decoration: underline; }
+        h1 { font-size: 24px; color: #e94560; margin-bottom: 6px; }
+        .subtitle { color: #88a; font-size: 14px; margin-bottom: 24px; }
+        .form-group { margin-bottom: 20px; }
+        label {
+            display: block; font-size: 13px; font-weight: 600;
+            text-transform: uppercase; letter-spacing: 1px;
+            color: #88a; margin-bottom: 6px;
+        }
+        .dir-row { display: flex; gap: 8px; }
+        input[type="text"], input[type="number"] {
+            flex: 1; padding: 12px 14px;
+            background: #1a1a2e; border: 2px solid #0f3460;
+            border-radius: 6px; color: #e0e0e0;
+            font-size: 15px; font-family: monospace;
+        }
+        input[type="text"]:focus, input[type="number"]:focus { outline: none; border-color: #4363d8; }
+        .btn-browse {
+            padding: 12px 20px; background: #0f3460; border: none;
+            border-radius: 6px; color: #e0e0e0; font-size: 14px;
+            font-weight: 600; cursor: pointer; white-space: nowrap;
+        }
+        .btn-browse:hover { background: #1a4a7a; }
+
+        .fps-row { display: flex; gap: 10px; align-items: center; }
+        .fps-row input[type="number"] { max-width: 120px; flex: 0 0 auto; }
+        .fps-row .hint { color: #778; font-size: 13px; }
+
+        .check-row {
+            display: flex; align-items: center; gap: 10px;
+            padding: 10px 14px; background: #1a1a2e;
+            border: 2px solid #0f3460; border-radius: 6px;
+        }
+        .check-row input { transform: scale(1.2); accent-color: #4363d8; }
+        .check-row label { margin: 0; text-transform: none; letter-spacing: 0; color: #ccd; font-weight: 500; font-size: 14px; }
+
+        .btn-start {
+            width: 100%; padding: 16px; background: #e94560; border: none;
+            border-radius: 8px; color: #fff; font-size: 18px; font-weight: 700;
+            cursor: pointer; text-transform: uppercase; letter-spacing: 1px; margin-top: 12px;
+        }
+        .btn-start:hover { background: #c7374e; }
+        .btn-start:disabled { background: #555; cursor: not-allowed; }
+
+        .error-msg {
+            background: #3a1525; border: 1px solid #e94560; border-radius: 6px;
+            padding: 10px 14px; font-size: 13px; color: #f5a0a8;
+            margin-bottom: 16px; display: none;
+        }
+        .hint-text { font-size: 12px; color: #778; margin-top: 6px; }
+
+        /* ── Progress panel ── */
+        .progress-panel {
+            display: none; margin-top: 8px;
+        }
+        .progress-panel.open { display: block; }
+        .progress-bar-wrap {
+            width: 100%; height: 22px; background: #1a1a2e;
+            border-radius: 11px; overflow: hidden;
+            border: 2px solid #0f3460;
+        }
+        .progress-bar {
+            height: 100%; width: 0%;
+            background: linear-gradient(90deg, #4363d8, #42d4f4);
+            transition: width 0.3s ease;
+        }
+        .progress-text {
+            display: flex; justify-content: space-between;
+            margin-top: 10px; font-size: 13px; color: #aac;
+        }
+        .progress-meta {
+            margin-top: 16px; padding: 14px;
+            background: #1a1a2e; border-radius: 8px;
+            font-size: 13px; color: #aac; font-family: monospace;
+            min-height: 60px; line-height: 1.7;
+        }
+        .progress-meta .ok { color: #3cb44b; }
+        .progress-meta .err { color: #e94560; }
+
+        .success-actions {
+            display: none;
+            margin-top: 20px; text-align: center;
+        }
+        .success-actions.open { display: block; }
+        .success-actions p {
+            color: #3cb44b; font-size: 15px; margin-bottom: 14px;
+        }
+        .btn-label-now {
+            padding: 14px 28px; background: #3cb44b; border: none;
+            border-radius: 8px; color: #fff; font-size: 15px; font-weight: 700;
+            cursor: pointer; text-transform: uppercase; letter-spacing: 1px;
+        }
+        .btn-label-now:hover { background: #2e9a3c; }
+        .btn-secondary {
+            padding: 10px 20px; background: #0f3460; border: none;
+            border-radius: 6px; color: #e0e0e0; font-size: 14px;
+            cursor: pointer; margin-left: 10px;
+        }
+        .btn-secondary:hover { background: #1a4a7a; }
+
+        /* ── Directory browser modal (same as setup) ── */
+        .modal-overlay {
+            display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0,0,0,0.7); z-index: 100;
+            align-items: center; justify-content: center;
+        }
+        .modal-overlay.open { display: flex; }
+        .modal {
+            background: #16213e; border: 2px solid #0f3460; border-radius: 12px;
+            width: 600px; max-width: 90vw; max-height: 80vh;
+            display: flex; flex-direction: column;
+        }
+        .modal-header {
+            padding: 16px 20px; border-bottom: 1px solid #0f3460;
+            display: flex; align-items: center; gap: 12px;
+        }
+        .modal-header h2 { font-size: 16px; color: #e0e0e0; flex: 1; }
+        .modal-close {
+            background: none; border: none; color: #88a; font-size: 22px;
+            cursor: pointer; padding: 0 4px;
+        }
+        .modal-close:hover { color: #e94560; }
+        .modal-path {
+            padding: 10px 20px; background: #1a1a2e;
+            font-family: monospace; font-size: 13px; color: #4363d8;
+            border-bottom: 1px solid #0f3460;
+            word-break: break-all;
+        }
+        .modal-body {
+            flex: 1; overflow-y: auto; padding: 8px 0;
+            min-height: 300px; max-height: 50vh;
+        }
+        .dir-item {
+            display: flex; align-items: center; gap: 10px;
+            padding: 10px 20px; cursor: pointer; font-size: 14px;
+            transition: background 0.1s;
+        }
+        .dir-item:hover { background: #222244; }
+        .dir-item .folder-icon { font-size: 18px; flex-shrink: 0; }
+        .dir-item .dir-name { flex: 1; word-break: break-all; }
+        .dir-item-up { color: #4363d8; font-weight: 600; }
+        .modal-footer {
+            padding: 14px 20px; border-top: 1px solid #0f3460;
+            display: flex; gap: 10px; justify-content: flex-end;
+        }
+        .modal-footer button {
+            padding: 10px 24px; border: none; border-radius: 6px;
+            font-size: 14px; font-weight: 600; cursor: pointer;
+        }
+        .btn-select-dir { background: #3cb44b; color: #fff; }
+        .btn-select-dir:hover { background: #2e9a3c; }
+        .btn-cancel { background: #555; color: #ddd; }
+        .btn-cancel:hover { background: #666; }
+        .empty-msg { padding: 20px; text-align: center; color: #667; font-size: 13px; }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <div class="breadcrumb"><a href="/">&larr; Home</a></div>
+        <h1>Prepare Dataset</h1>
+        <p class="subtitle">Extract still images from a folder of videos so you can label them.</p>
+
+        <div id="error-msg" class="error-msg"></div>
+
+        <div id="setup-form">
+            <div class="form-group">
+                <label>Step 1 &middot; Folder containing your videos</label>
+                <div class="dir-row">
+                    <input type="text" id="input-dir" placeholder="/path/to/videos">
+                    <button class="btn-browse" onclick="openBrowser('input-dir')">Browse</button>
+                </div>
+                <p class="hint-text">Supported formats: .mp4, .mov, .avi, .mkv, and more.</p>
+            </div>
+
+            <div class="form-group">
+                <label>Step 2 &middot; Where should the images go?</label>
+                <div class="dir-row">
+                    <input type="text" id="output-dir" placeholder="/path/to/dataset">
+                    <button class="btn-browse" onclick="openBrowser('output-dir')">Browse</button>
+                </div>
+                <p class="hint-text">A new folder will be created here if it doesn't exist. Existing images in this folder will not be deleted.</p>
+            </div>
+
+            <div class="form-group">
+                <label>Step 3 &middot; Frames per second</label>
+                <div class="fps-row">
+                    <input type="number" id="fps" value="1" min="0.1" max="30" step="0.1">
+                    <span class="hint">1 fps is a good default for fish counting videos.</span>
+                </div>
+            </div>
+
+            <div class="form-group">
+                <div class="check-row">
+                    <input type="checkbox" id="flatten" checked>
+                    <label for="flatten">Put all frames in one folder (recommended — makes labeling easier)</label>
+                </div>
+            </div>
+
+            <button class="btn-start" id="btn-start" onclick="startPrepare()">Start Extraction</button>
+        </div>
+
+        <div class="progress-panel" id="progress-panel">
+            <div class="form-group">
+                <label>Progress</label>
+                <div class="progress-bar-wrap">
+                    <div class="progress-bar" id="progress-bar"></div>
+                </div>
+                <div class="progress-text">
+                    <span id="progress-pct">0%</span>
+                    <span id="progress-count">0 of 0 videos</span>
+                </div>
+            </div>
+            <div class="progress-meta" id="progress-meta">Starting…</div>
+
+            <div class="success-actions" id="success-actions">
+                <p id="success-msg">Done!</p>
+                <button class="btn-label-now" onclick="labelNow()">Label These Now &rarr;</button>
+                <button class="btn-secondary" onclick="location.href='/'">Back to Home</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Directory browser modal -->
+    <div class="modal-overlay" id="browser-modal">
+        <div class="modal">
+            <div class="modal-header">
+                <h2 id="modal-title">Select Folder</h2>
+                <button class="modal-close" onclick="closeBrowser()">&times;</button>
+            </div>
+            <div class="modal-path" id="browser-path">/</div>
+            <div class="modal-body" id="browser-body"></div>
+            <div class="modal-footer">
+                <button class="btn-cancel" onclick="closeBrowser()">Cancel</button>
+                <button class="btn-select-dir" onclick="selectDir()">Select This Folder</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // ── Directory browser (shared with setup) ──
+        let browserTarget = null;
+        let browserCurrentPath = "";
+
+        function openBrowser(targetId) {
+            browserTarget = targetId;
+            document.getElementById("modal-title").textContent =
+                targetId === "input-dir" ? "Select the folder containing your videos"
+                                           : "Select the folder to save images to";
+            document.getElementById("browser-modal").classList.add("open");
+            const currentVal = document.getElementById(targetId).value.trim();
+            loadDir(currentVal || "");
+        }
+        function closeBrowser() {
+            document.getElementById("browser-modal").classList.remove("open");
+            browserTarget = null;
+        }
+        function selectDir() {
+            if (browserTarget && browserCurrentPath) {
+                document.getElementById(browserTarget).value = browserCurrentPath;
+            }
+            closeBrowser();
+        }
+        async function loadDir(path) {
+            const body = document.getElementById("browser-body");
+            body.innerHTML = '<div class="empty-msg">Loading...</div>';
+            try {
+                const resp = await fetch("/api/list-dir", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ path }),
+                });
+                const data = await resp.json();
+                if (data.error) { body.innerHTML = `<div class="empty-msg">${data.error}</div>`; return; }
+                browserCurrentPath = data.path || "";
+                document.getElementById("browser-path").textContent = browserCurrentPath || "(select a drive)";
+                body.innerHTML = "";
+                if (!data.is_root && data.parent !== undefined) {
+                    const up = document.createElement("div");
+                    up.className = "dir-item dir-item-up";
+                    up.innerHTML = '<span class="folder-icon">..</span><span class="dir-name">Go Up</span>';
+                    up.addEventListener("click", () => loadDir(data.parent));
+                    body.appendChild(up);
+                }
+                if (data.dirs.length === 0) {
+                    const empty = document.createElement("div");
+                    empty.className = "empty-msg";
+                    empty.textContent = "No subdirectories";
+                    body.appendChild(empty);
+                }
+                for (const dir of data.dirs) {
+                    const item = document.createElement("div");
+                    item.className = "dir-item";
+                    const parts = dir.replace(/\\/g, "/").split("/");
+                    const displayName = parts[parts.length - 1] || dir;
+                    item.innerHTML = `<span class="folder-icon">&#128193;</span><span class="dir-name">${displayName}</span>`;
+                    item.addEventListener("click", () => loadDir(dir));
+                    body.appendChild(item);
+                }
+            } catch (e) {
+                body.innerHTML = `<div class="empty-msg">Error loading directory: ${e.message}</div>`;
+            }
+        }
+
+        // ── Messages ──
+        function showError(msg) {
+            const el = document.getElementById("error-msg");
+            el.textContent = msg;
+            el.style.display = "block";
+        }
+        function clearError() {
+            document.getElementById("error-msg").style.display = "none";
+        }
+
+        // ── Start / poll extraction ──
+        let pollTimer = null;
+        let finalOutputDir = null;
+
+        async function startPrepare() {
+            clearError();
+            const inputDir = document.getElementById("input-dir").value.trim();
+            const outputDir = document.getElementById("output-dir").value.trim();
+            const fps = parseFloat(document.getElementById("fps").value);
+            const flatten = document.getElementById("flatten").checked;
+
+            if (!inputDir) return showError("Pick the folder containing your videos.");
+            if (!outputDir) return showError("Pick where to save the extracted images.");
+            if (!fps || fps <= 0) return showError("Frames per second must be greater than 0.");
+
+            document.getElementById("btn-start").disabled = true;
+            document.getElementById("btn-start").textContent = "Starting…";
+
+            try {
+                const resp = await fetch("/api/prepare/start", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ input_dir: inputDir, output_dir: outputDir, fps, flatten }),
+                });
+                const data = await resp.json();
+                if (data.error) {
+                    showError(data.error);
+                    document.getElementById("btn-start").disabled = false;
+                    document.getElementById("btn-start").textContent = "Start Extraction";
+                    return;
+                }
+                document.getElementById("setup-form").style.display = "none";
+                document.getElementById("progress-panel").classList.add("open");
+                pollStatus();
+            } catch (e) {
+                showError("Failed to start: " + e.message);
+                document.getElementById("btn-start").disabled = false;
+                document.getElementById("btn-start").textContent = "Start Extraction";
+            }
+        }
+
+        async function pollStatus() {
+            try {
+                const resp = await fetch("/api/prepare/status");
+                const s = await resp.json();
+                renderStatus(s);
+                if (s.status === "running") {
+                    pollTimer = setTimeout(pollStatus, 500);
+                }
+            } catch (e) {
+                pollTimer = setTimeout(pollStatus, 1500);
+            }
+        }
+
+        function renderStatus(s) {
+            const pct = Math.round((s.overall_progress || 0) * 100);
+            document.getElementById("progress-bar").style.width = pct + "%";
+            document.getElementById("progress-pct").textContent = pct + "%";
+            const vi = (s.video_index ?? 0) + (s.status === "done" ? 0 : 1);
+            const vt = s.video_total || 0;
+            document.getElementById("progress-count").textContent =
+                vt ? `${Math.min(vi, vt)} of ${vt} videos` : "…";
+
+            const meta = document.getElementById("progress-meta");
+            const frames = s.frames_done || 0;
+            if (s.status === "running") {
+                meta.innerHTML =
+                    `<div>${escapeHtml(s.message || "Working…")}</div>` +
+                    `<div>Frames written so far: <strong>${frames}</strong></div>`;
+            } else if (s.status === "done") {
+                finalOutputDir = s.output_dir;
+                meta.innerHTML =
+                    `<div class="ok">✓ ${escapeHtml(s.message || "Done")}</div>` +
+                    `<div>Total frames: <strong>${frames}</strong></div>` +
+                    `<div>Saved to: <span style="color:#4363d8">${escapeHtml(s.output_dir || "")}</span></div>`;
+                document.getElementById("success-msg").textContent =
+                    `Extracted ${frames} frames from ${s.video_total} video${s.video_total === 1 ? "" : "s"}.`;
+                document.getElementById("success-actions").classList.add("open");
+            } else if (s.status === "error") {
+                meta.innerHTML = `<div class="err">✗ ${escapeHtml(s.message || "Error")}</div>`;
+                document.getElementById("btn-start").disabled = false;
+                document.getElementById("btn-start").textContent = "Start Extraction";
+                document.getElementById("setup-form").style.display = "";
+                document.getElementById("progress-panel").classList.remove("open");
+                showError(s.message || "Extraction failed.");
+            }
+        }
+
+        function escapeHtml(s) {
+            return String(s).replace(/[&<>"']/g, c => ({
+                "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+            }[c]));
+        }
+
+        async function labelNow() {
+            // Jump straight into the labeler setup with the output dir pre-filled.
+            if (!finalOutputDir) return;
+            window.location.href = "/setup?input=" + encodeURIComponent(finalOutputDir);
+        }
+
+        // If an extraction is already running (e.g., user refreshed), pick up where we left off.
+        (async () => {
+            try {
+                const resp = await fetch("/api/prepare/status");
+                const s = await resp.json();
+                if (s && s.status && s.status !== "idle") {
+                    document.getElementById("setup-form").style.display = "none";
+                    document.getElementById("progress-panel").classList.add("open");
+                    renderStatus(s);
+                    if (s.status === "running") pollStatus();
+                }
+            } catch (e) { /* ignore */ }
+        })();
+    </script>
+</body>
+</html>

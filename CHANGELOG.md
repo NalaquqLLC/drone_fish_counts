@@ -1,6 +1,19 @@
 # Changelog
 
 ## 2026-04-14
+- Added a **home screen** as the app's landing page with two modes: **Prepare Dataset** and **Label Imagery**
+- Added a **Prepare Dataset** flow that turns a folder of videos into a folder of still images directly from the UI
+  - Browse-based pickers for the video source and image destination folders (same picker used by the labeler setup)
+  - Configurable frame rate (default 1 fps) and optional "flatten into one folder" toggle
+  - Live progress bar with per-video status, frame count, and overall percentage (uses `ffmpeg -progress` output)
+  - Extraction runs on a background thread so the UI stays responsive; status survives page reloads
+  - "Label These Now" shortcut jumps straight from a finished extraction into the labeler setup with the output folder pre-filled
+- **Bundled ffmpeg** via `imageio-ffmpeg` so end users no longer need to install ffmpeg themselves; `build_exe.py` now collects the binary into the packaged `.exe`
+- Refactored `scripts/extract_frames.py` into a shared `labeler/video_utils.py` module; removed the hardcoded `BASE_DIR` and turned the CLI into a flexible `--input / --output / --fps / --flatten` tool
+- Added `scripts/labeler/requirements.txt`
+- Added **Home**, **Prepare Dataset**, and **Setup** navigation links to the labeler header so users can move between screens without restarting the app
+- Updated README and labeling guide to cover the new home screen, Prepare Dataset flow, and segmentation masks
+- Added `docs/build_guide.md` with PowerShell instructions for building `FishLabeler.exe` from source, including WSL-path builds, smoke testing, and troubleshooting; README links to it from the Building section
 - Output directory is now fixed at `labeling_output/` next to the app/.exe and created automatically
   - Removed the Output Directory picker from the setup screen to prevent users from accidentally selecting a different folder each session
   - Setup screen now shows the output location as a read-only info line

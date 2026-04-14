@@ -12,12 +12,15 @@ Provides a web UI with:
 import json
 import os
 import sys
+import threading
 import uuid
 import webbrowser
 from pathlib import Path
 from threading import Timer
 
 from flask import Flask, abort, jsonify, redirect, render_template, request, send_from_directory, url_for
+
+from video_utils import extract_batch, flatten_output, list_videos
 
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".tiff", ".tif", ".webp"}
 
@@ -191,17 +194,99 @@ def create_app():
                 lines.append(f"{cls} {x:.6f} {y:.6f} {ann['w']:.6f} {ann['h']:.6f}")
         _label_path(filename).write_text("\n".join(lines) + "\n" if lines else "")
 
+    # ─── Prepare-dataset state (single-job, in-memory) ───
+    prepare_state: dict = {
+        "status": "idle",       # idle | running | done | error
+        "video_index": 0,
+        "video_total": 0,
+        "video_name": "",
+        "video_progress": 0.0,
+        "overall_progress": 0.0,
+        "frames_done": 0,
+        "message": "",
+        "output_dir": "",
+    }
+    prepare_lock = threading.Lock()
+
+    def _update_prepare(**kwargs):
+        with prepare_lock:
+            prepare_state.update(kwargs)
+
     # ─── Routes ───
 
     @app.route("/")
     def index():
-        if _is_configured():
-            return redirect(url_for("label_page"))
-        return redirect(url_for("setup_page"))
+        return render_template("home.html")
 
     @app.route("/setup")
     def setup_page():
-        return render_template("setup.html")
+        # Optional ?input=... pre-fills the input directory (used when jumping
+        # here from the prepare-dataset flow).
+        prefill_input = request.args.get("input", "").strip()
+        return render_template("setup.html", prefill_input=prefill_input)
+
+    @app.route("/prepare")
+    def prepare_page():
+        return render_template("prepare.html")
+
+    @app.route("/api/prepare/start", methods=["POST"])
+    def api_prepare_start():
+        data = request.get_json() or {}
+        input_dir = (data.get("input_dir") or "").strip()
+        output_dir = (data.get("output_dir") or "").strip()
+        fps = float(data.get("fps") or 1.0)
+        flatten = bool(data.get("flatten", True))
+
+        if not input_dir or not Path(input_dir).is_dir():
+            return jsonify({"error": f"Video folder not found: {input_dir}"}), 400
+        if not output_dir:
+            return jsonify({"error": "Output folder is required"}), 400
+        if fps <= 0:
+            return jsonify({"error": "Frames per second must be greater than 0"}), 400
+
+        in_path = Path(input_dir).resolve()
+        out_path = Path(output_dir).resolve()
+
+        videos = list_videos(in_path)
+        if not videos:
+            return jsonify({"error": f"No video files found in {in_path}"}), 400
+
+        with prepare_lock:
+            if prepare_state["status"] == "running":
+                return jsonify({"error": "An extraction is already running"}), 409
+            prepare_state.update({
+                "status": "running",
+                "video_index": 0,
+                "video_total": len(videos),
+                "video_name": "",
+                "video_progress": 0.0,
+                "overall_progress": 0.0,
+                "frames_done": 0,
+                "message": "Starting…",
+                "output_dir": str(out_path),
+            })
+
+        def on_progress(state: dict) -> None:
+            _update_prepare(**state, output_dir=str(out_path))
+
+        def worker():
+            try:
+                out_path.mkdir(parents=True, exist_ok=True)
+                extract_batch(in_path, out_path, fps=fps, progress_callback=on_progress)
+                if flatten:
+                    _update_prepare(status="running", message="Organizing files…")
+                    flatten_output(out_path)
+                _update_prepare(status="done", message=f"Done! Images saved to {out_path}", output_dir=str(out_path), overall_progress=1.0)
+            except Exception as e:
+                _update_prepare(status="error", message=str(e))
+
+        threading.Thread(target=worker, daemon=True).start()
+        return jsonify({"status": "started", "video_count": len(videos)})
+
+    @app.route("/api/prepare/status", methods=["GET"])
+    def api_prepare_status():
+        with prepare_lock:
+            return jsonify(dict(prepare_state))
 
     @app.route("/api/setup", methods=["POST"])
     def api_setup():

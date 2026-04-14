@@ -157,8 +157,9 @@
 </head>
 <body>
     <div class="setup-card">
-        <h1>Fish Labeling Tool</h1>
-        <p class="subtitle">Set up your labeling session. Select directories and define your labels.</p>
+        <div style="font-size:13px;color:#667;margin-bottom:10px;"><a href="/" style="color:#4363d8;text-decoration:none;">&larr; Home</a></div>
+        <h1>Label Imagery &mdash; Setup</h1>
+        <p class="subtitle">Select a folder of images and confirm your label classes.</p>
 
         <div id="error-msg" class="error-msg"></div>
         <div id="info-msg" class="info-msg"></div>
@@ -330,6 +331,9 @@
 
         // ── Load current/previous session from server ──
 
+        // Server-side prefill (e.g. from the prepare-dataset flow) wins over the saved session.
+        const PREFILL_INPUT = {{ prefill_input|tojson }};
+
         async function loadCurrentConfig() {
             try {
                 const resp = await fetch("/api/current-config");
@@ -342,6 +346,10 @@
                     labels = Object.values(cfg.labels || {});
                     renderLabels();
                     showInfo("Previous session restored — click Start to continue, or change settings below.");
+                }
+                if (PREFILL_INPUT) {
+                    document.getElementById("input-dir").value = PREFILL_INPUT;
+                    showInfo("Input folder set from the dataset you just prepared. Confirm labels and click Start.");
                 }
             } catch (e) { /* ignore */ }
         }

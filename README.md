@@ -5,11 +5,23 @@ Video-to-image pipeline and labeling tool for building a YOLO object detection m
 ## Quick Start (for students)
 
 1. Double-click **`FishLabeler.exe`** in this folder
-2. Your browser will open to the setup screen
-3. Set **Input Directory** to the `dataset` folder on this drive
-4. Set **Output Directory** to wherever you want your labels saved (e.g., a new `labels` folder on this drive)
-5. Confirm the label classes (king, red, silver, chum, pink) and click **Start Labeling**
-6. Label images, delete empty ones, and export to YOLO format when done
+2. Your browser will open to the **home screen** with two options:
+   - **Prepare Dataset** — turn videos into still images
+   - **Label Imagery** — draw boxes or polygons on fish
+
+### If you already have images
+
+Click **Label Imagery**, point it at your `dataset` folder, confirm the salmon species labels, and click **Start Labeling**.
+
+### If you only have videos
+
+Click **Prepare Dataset**:
+
+1. Select the folder containing your `.mp4` (or `.mov`, `.avi`, etc.) videos
+2. Select where the extracted images should go (the folder will be created if it doesn't exist)
+3. Pick a frame rate (1 fps is a good default)
+4. Click **Start Extraction** and watch the progress bar
+5. When done, click **Label These Now** to jump straight into labeling
 
 See [`docs/labeling_guide.md`](docs/labeling_guide.md) for detailed instructions.
 
@@ -18,27 +30,18 @@ See [`docs/labeling_guide.md`](docs/labeling_guide.md) for detailed instructions
 ```
 AOOS Files/
 ├── FishLabeler.exe        # Labeling tool — double-click to run
-├── dataset/               # 2,594 extracted frames (PNG) ready for labeling
+├── dataset/               # Extracted frames (PNG) ready for labeling
 ├── raw_videos/            # Original source video files
-│   ├── Count only/        #   9 fish counting sample videos
-│   └── Species/           #   4 species identification sample videos
+│   ├── Count only/        #   Fish counting sample videos
+│   └── Species/           #   Species identification sample videos
 ├── scripts/               # Processing and utility scripts
-│   ├── extract_frames.py  #   Video-to-frame extraction (1 fps, PNG)
+│   ├── extract_frames.py  #   Command-line frame extraction (optional)
 │   └── labeler/           #   Labeling tool source code
-├─��� docs/                  # Documentation
+├── docs/                  # Documentation
 │   └── labeling_guide.md  #   Step-by-step student guide
 ├── CHANGELOG.md           # Log of all work performed
 └── README.md              # This file
 ```
-
-## About the Data
-
-The `dataset/` folder contains **2,594 PNG images** extracted at 1 frame per second from 13 underwater fish monitoring videos (1920x1080, 24fps). The source videos are in `raw_videos/`.
-
-| Source | Videos | Frames |
-|--------|--------|--------|
-| Count only (2022 + 2024) | 9 | 2,184 |
-| Species (2024) | 4 | 410 |
 
 ## Label Classes
 
@@ -52,28 +55,36 @@ The `dataset/` folder contains **2,594 PNG images** extracted at 1 frame per sec
 
 ## Frame Extraction
 
-If you need to re-extract frames from the source videos, you will need Python 3 and `ffmpeg` installed:
+The easiest way to extract frames is through the app's **Prepare Dataset** screen — no installation required. A command-line version is available for automation:
 
 ```bash
-python scripts/extract_frames.py
+pip install imageio-ffmpeg
+python scripts/extract_frames.py --input /path/to/videos --output /path/to/frames --fps 1
 ```
 
-This extracts 1 frame per second as PNG from every `.mp4` in `raw_videos/Count only/` and `raw_videos/Species/`.
+Add `--flatten` to move all PNGs into a single output folder (matches the app's default behavior).
+
+`ffmpeg` is bundled with the `imageio-ffmpeg` Python package, so you do **not** need to install `ffmpeg` separately.
 
 ## Building the Labeling Tool
 
-The pre-built `FishLabeler.exe` is included and ready to use. If you need to rebuild it:
+The pre-built `FishLabeler.exe` is included and ready to use. See [`docs/build_guide.md`](docs/build_guide.md) for full step-by-step build instructions. Short version:
 
-1. Install Python 3.12+ on Windows
-2. Install dependencies: `pip install pyinstaller flask`
-3. From the `scripts/labeler/` directory, run: `python build_exe.py`
-4. The new exe will be in `scripts/labeler/dist/`
+```powershell
+cd C:\path\to\drone_fish_counts\scripts\labeler
+python -m pip install -r requirements.txt pyinstaller
+python build_exe.py
+```
+
+Output: `scripts\labeler\dist\FishLabeler.exe`. The bundled ffmpeg binary from `imageio-ffmpeg` is automatically packaged — end users do not need to install anything.
 
 ## Output Format
 
 The labeling tool exports annotations in **YOLO format**:
 
-- `labels/*.txt` — one file per image, each line: `class_id center_x center_y width height` (normalized 0-1)
+- `labels/*.txt` — one file per image
+  - Boxes: `class_id center_x center_y width height` (normalized 0–1)
+  - Polygons: `class_id x1 y1 x2 y2 ...` (YOLO-seg format, normalized 0–1)
 - `classes.txt` — class name list
 - `dataset.yaml` — YOLO training configuration file
 

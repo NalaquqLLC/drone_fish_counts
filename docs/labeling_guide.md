@@ -10,17 +10,34 @@ You are drawing bounding boxes around individual fish in underwater video frames
 
 ### 1. Launch the Tool
 
-Double-click **`FishLabeler.exe`** in the root of the drive. Your web browser will open automatically to the setup screen.
+Double-click **`FishLabeler.exe`** in the root of the drive. Your web browser will open automatically to the **home screen**.
 
 If the browser doesn't open, manually go to: `http://localhost:5000`
 
-### 2. Setup Screen
+### 2. Home Screen
 
-You need to configure three things:
+The home screen has two options:
 
-**Input Directory** — Click **Browse** and navigate to the `dataset` folder on this drive. This is where the images are.
+- **Prepare Dataset** — Use this if you have raw video files and need to turn them into still images before labeling.
+- **Label Imagery** — Use this if you already have a folder of images ready to label.
 
-**Output Directory** — Click **Browse** and choose where you want your annotations saved. A good choice is to create a new `labels` folder on this drive. The tool will create subfolders inside it automatically.
+### 3a. Prepare Dataset (only if you have videos)
+
+1. Click **Prepare Dataset** on the home screen.
+2. **Step 1** — Click **Browse** next to "Folder containing your videos" and select the folder with your `.mp4` / `.mov` / `.avi` files.
+3. **Step 2** — Click **Browse** next to "Where should the images go?" and pick a destination folder. A new folder will be created if it doesn't exist.
+4. **Step 3** — Set frames per second. `1` is a good default for fish counting.
+5. Leave **"Put all frames in one folder"** checked (recommended — makes labeling easier).
+6. Click **Start Extraction**. A progress bar shows how far along it is.
+7. When it finishes, click **Label These Now** to jump straight into the labeler with the new folder pre-filled.
+
+You do not need to install ffmpeg yourself — the tool ships with everything it needs.
+
+### 3b. Label Imagery Setup
+
+From the home screen, click **Label Imagery**. You need to configure two things:
+
+**Input Directory** — Click **Browse** and navigate to the folder that contains your images (e.g., the `dataset` folder, or whatever you chose in **Prepare Dataset**).
 
 **Labels** — The five salmon species should already be listed:
 - king (Chinook)
@@ -31,11 +48,13 @@ You need to configure three things:
 
 You can add, remove, or rename labels if needed.
 
+The **Output Directory** is managed for you — annotations, YOLO label files, and deleted images are written to a `labeling_output/` folder next to the app. You don't need to set it.
+
 Click **Start Labeling** when ready.
 
-### 3. Resuming a Previous Session
+### 4. Resuming a Previous Session
 
-When you relaunch the tool, it remembers your last session and will take you straight to labeling. If you need to change directories, click the **Setup** link in the top-right corner.
+When you relaunch the tool, it remembers your last session. Click **Label Imagery** on the home screen and your previous input folder and labels will be pre-filled — click **Start Labeling** to continue where you left off.
 
 ## Labeling Images
 
@@ -92,11 +111,21 @@ Many frames won't have any fish visible. For these:
 
 Your progress is saved to disk, so you can close the tool and come back anytime.
 
+## Annotation Modes
+
+The sidebar has a **Box** / **Polygon** toggle:
+
+- **Box mode** (press `B`) — click and drag a rectangle. Best for most fish.
+- **Polygon mode** (press `P`) — click to place vertices around the fish, double-click or press `Enter` to finish, `Esc` to cancel. Use this when you need a tight segmentation mask instead of a rectangle. Select a finished polygon to drag individual vertices.
+
+Box annotations export as YOLO detection format; polygon annotations export as YOLO-seg format. You can mix the two in the same dataset.
+
 ## Keyboard Shortcuts
 
 | Key | Action |
 |-----|--------|
 | `1`-`5` | Select species (king, red, silver, chum, pink) |
+| `B` / `P` | Switch between Box and Polygon annotation modes |
 | Left / Right arrow | Previous / next image |
 | `Ctrl+S` | Save annotations |
 | `Enter` | Mark done and go to next image |
@@ -134,10 +163,14 @@ These files are written to your output directory and are ready for model trainin
 
 **Browser didn't open** — Go to `http://localhost:5000` manually.
 
-**"No images found"** — Make sure your input directory points to a folder containing `.png` (or `.jpg`) files directly, not a folder of subfolders.
+**"No images found"** — Make sure your input directory points to a folder containing `.png` (or `.jpg`) files directly, not a folder of subfolders. If you prepared the dataset yourself, leave the "Put all frames in one folder" checkbox ticked.
+
+**"No video files found"** (Prepare Dataset) — The tool looks for `.mp4`, `.mov`, `.avi`, `.mkv`, `.m4v`, `.mpg`, `.mpeg`, and `.wmv` files directly in the folder you selected. Make sure you're pointing at the folder, not a parent folder.
+
+**Extraction is slow** — Long videos take a few minutes each. The progress bar updates as ffmpeg processes each video. Leave it running; you can close the browser and reopen it later — the app keeps working in the background.
 
 **Images look dark/unclear** — Use scroll-to-zoom to inspect details. Some frames from the underwater video will naturally be murky.
 
-**Lost work** — Check the output directory. All annotations are saved as JSON files in the `annotations/` subfolder. YOLO labels are in `labels/`. The `progress.json` file tracks what you've completed.
+**Lost work** — Check the `labeling_output/` folder next to the app. All annotations are saved as JSON files in the `annotations/` subfolder. YOLO labels are in `labels/`. The `progress.json` file tracks what you've completed.
 
-**Accidentally deleted an image** — Deleted images are moved to the `deleted/` subfolder in your output directory. You can manually move them back to the input folder.
+**Accidentally deleted an image** — Deleted images are moved to the `deleted/` subfolder in the `labeling_output/` folder. You can manually move them back to the input folder.

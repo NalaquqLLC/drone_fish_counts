@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Fish Labeling Tool</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            background: #1a1a2e;
+            color: #e0e0e0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            padding: 24px;
+        }
+        .home {
+            width: 860px;
+            max-width: 95vw;
+            text-align: center;
+        }
+        h1 { font-size: 32px; color: #e94560; margin-bottom: 10px; }
+        .subtitle { color: #aac; font-size: 15px; margin-bottom: 36px; }
+        .cards {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 22px;
+        }
+        @media (max-width: 720px) {
+            .cards { grid-template-columns: 1fr; }
+        }
+        .card {
+            background: #16213e;
+            border: 2px solid #0f3460;
+            border-radius: 14px;
+            padding: 36px 28px;
+            cursor: pointer;
+            transition: transform 0.1s, border-color 0.1s, background 0.1s;
+            text-align: left;
+        }
+        .card:hover {
+            transform: translateY(-3px);
+            border-color: #4363d8;
+            background: #1a2a4e;
+        }
+        .card:focus { outline: 3px solid #4363d8; outline-offset: 2px; }
+        .card .icon {
+            font-size: 44px;
+            margin-bottom: 14px;
+            display: block;
+        }
+        .card h2 {
+            font-size: 20px;
+            color: #e0e0e0;
+            margin-bottom: 8px;
+        }
+        .card p {
+            color: #99a;
+            font-size: 14px;
+            line-height: 1.5;
+        }
+        .card .step-list {
+            margin-top: 14px;
+            font-size: 13px;
+            color: #88a;
+        }
+        .card .step-list li { margin-left: 18px; margin-top: 4px; }
+        .footer {
+            margin-top: 40px;
+            font-size: 12px;
+            color: #555;
+        }
+        .footer a { color: #4363d8; text-decoration: none; }
+    </style>
+</head>
+<body>
+    <div class="home">
+        <h1>Fish Labeling Tool</h1>
+        <p class="subtitle">What would you like to do today?</p>
+
+        <div class="cards">
+            <a class="card" href="/prepare" role="button">
+                <span class="icon">&#127909;</span>
+                <h2>Prepare Dataset</h2>
+                <p>Turn video files into still images ready for labeling. Choose a folder of videos and a destination, and the tool will extract frames for you.</p>
+                <ul class="step-list">
+                    <li>Pick a folder of videos</li>
+                    <li>Pick where to save the frames</li>
+                    <li>Watch the progress bar</li>
+                </ul>
+            </a>
+
+            <a class="card" href="/label" role="button">
+                <span class="icon">&#127919;</span>
+                <h2>Label Imagery</h2>
+                <p>Open a folder of still images and draw boxes or polygons around fish. Exports directly to YOLO training format.</p>
+                <ul class="step-list">
+                    <li>Pick a folder of images</li>
+                    <li>Confirm the species labels</li>
+                    <li>Start labeling</li>
+                </ul>
+            </a>
+        </div>
+
+        <p class="footer">Developed for KRITFC / Kuskokwim River monitoring by Nalaquq LLC.</p>
+    </div>
+</body>
+</html>

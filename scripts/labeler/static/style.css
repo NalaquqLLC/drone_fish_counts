@@ -29,6 +29,10 @@ header h1 {
     color: #e94560;
 }
 
+.header-nav {
+    display: flex;
+    gap: 8px;
+}
 .header-link {
     color: #888;
     font-size: 13px;
