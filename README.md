@@ -2,6 +2,8 @@
 
 Video-to-image pipeline and labeling tool for building a YOLO object detection model to count and classify salmon from underwater video. Developed for KRITFC / Kuskokwim River monitoring by Nalaquq LLC.
 
+Demo video: https://youtu.be/iGXpuL3Rk6w
+
 ## Quick Start (for students)
 
 1. Double-click **`FishLabeler.exe`** in this folder
