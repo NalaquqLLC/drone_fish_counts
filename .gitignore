@@ -23,6 +23,7 @@ FishLabeler.exe
 # Python
 __pycache__/
 *.pyc
+.pytest_cache/
 
 # Labeler session files
 last_session.json

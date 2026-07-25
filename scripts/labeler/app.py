@@ -10,18 +10,17 @@ Provides a web UI with:
 """
 
 import json
-import os
 import sys
 import threading
 import uuid
 import webbrowser
+from functools import wraps
 from pathlib import Path
 from threading import Timer
 
 from flask import Flask, abort, jsonify, redirect, render_template, request, send_from_directory, url_for
 
 from video_utils import (
-    RAW_EXTENSIONS,
     convert_raw_batch,
     extract_batch,
     flatten_output,
@@ -85,6 +84,23 @@ def create_app():
     def _is_configured():
         s = _session()
         return bool(s.get("input_dir") and s.get("output_dir") and s.get("labels"))
+
+    def _requires_setup(fn):
+        """Reject API calls made before a session exists.
+
+        Without this the session lookups below raise a bare KeyError and the
+        user gets a Python traceback instead of a pointer back to Setup. This
+        happens in normal use whenever a remembered input folder has moved.
+        """
+        @wraps(fn)
+        def wrapper(*args, **kwargs):
+            if not _is_configured():
+                return jsonify({
+                    "error": "No labeling session is configured. Run Setup first.",
+                    "needs_setup": True,
+                }), 409
+            return fn(*args, **kwargs)
+        return wrapper
 
     def _last_session_path() -> Path:
         """Fixed location to remember the last-used session across restarts."""
@@ -202,6 +218,14 @@ def create_app():
         _annotation_path(filename).write_text(json.dumps(annotations, indent=2))
         _export_yolo(filename, annotations)
 
+    def _clamp(v: float) -> float:
+        """Constrain a normalized coordinate to [0, 1].
+
+        Annotations dragged past the image edge would otherwise export
+        out-of-range values, which YOLO trainers reject.
+        """
+        return max(0.0, min(1.0, float(v)))
+
     def _export_yolo(filename: str, annotations: list[dict]) -> None:
         """Write YOLO-format label file from annotations.
 
@@ -215,12 +239,20 @@ def create_app():
                 pts = ann.get("points", [])
                 if len(pts) < 3:
                     continue
-                coords = " ".join(f"{p[0]:.6f} {p[1]:.6f}" for p in pts)
+                coords = " ".join(f"{_clamp(p[0]):.6f} {_clamp(p[1]):.6f}" for p in pts)
                 lines.append(f"{cls} {coords}")
             else:
-                x = ann["x"] + ann["w"] / 2
-                y = ann["y"] + ann["h"] / 2
-                lines.append(f"{cls} {x:.6f} {y:.6f} {ann['w']:.6f} {ann['h']:.6f}")
+                # Clamp the box to the image first, then derive the center so
+                # the center stays consistent with the clamped width/height.
+                x0 = _clamp(ann["x"])
+                y0 = _clamp(ann["y"])
+                x1 = _clamp(ann["x"] + ann["w"])
+                y1 = _clamp(ann["y"] + ann["h"])
+                w = x1 - x0
+                h = y1 - y0
+                if w <= 0 or h <= 0:
+                    continue
+                lines.append(f"{cls} {x0 + w / 2:.6f} {y0 + h / 2:.6f} {w:.6f} {h:.6f}")
         _label_path(filename).write_text("\n".join(lines) + "\n" if lines else "")
 
     # ─── Prepare-dataset state (single-job, in-memory) ───
@@ -307,13 +339,12 @@ def create_app():
                 total_frames = 0
 
                 if videos:
-                    extract_batch(in_path, out_path, fps=fps, progress_callback=on_video_progress)
-                    total_frames += sum(1 for _ in out_path.rglob("*.png"))
+                    video_summary = extract_batch(in_path, out_path, fps=fps, progress_callback=on_video_progress)
+                    total_frames += video_summary["total_frames"]
 
                 if raws:
                     def on_raw_progress(state: dict) -> None:
                         ri = state["raw_index"]
-                        rt = state["raw_total"]
                         offset = len(videos)
                         overall = (offset + ri + state["raw_progress"]) / total_items
                         _update_prepare(
@@ -411,8 +442,13 @@ def create_app():
                 mnt = Path("/mnt")
                 if mnt.is_dir():
                     for d in sorted(mnt.iterdir()):
-                        if d.is_dir() and any(d.iterdir()):
-                            dirs.append(str(d))
+                        # Mapped-but-disconnected drives raise OSError on access
+                        # (e.g. ENODEV under WSL) — skip anything unreadable.
+                        try:
+                            if d.is_dir() and any(d.iterdir()):
+                                dirs.append(str(d))
+                        except OSError:
+                            continue
                 home = Path.home()
                 if home.is_dir():
                     dirs.append(str(home))
@@ -463,6 +499,7 @@ def create_app():
         )
 
     @app.route("/api/images")
+    @_requires_setup
     def api_images():
         images = _list_images()
         progress = _load_progress()
@@ -475,17 +512,20 @@ def create_app():
         })
 
     @app.route("/api/image/<path:filename>")
+    @_requires_setup
     def api_image(filename: str):
         if not (_input_path() / filename).is_file():
             abort(404)
         return send_from_directory(str(_input_path()), filename)
 
     @app.route("/api/annotations/<path:filename>", methods=["GET"])
+    @_requires_setup
     def api_get_annotations(filename: str):
         annotations = _load_annotations(filename)
         return jsonify({"filename": filename, "annotations": annotations})
 
     @app.route("/api/annotations/<path:filename>", methods=["POST"])
+    @_requires_setup
     def api_save_annotations(filename: str):
         data = request.get_json()
         annotations = data.get("annotations", [])
@@ -496,6 +536,7 @@ def create_app():
         return jsonify({"status": "saved", "count": len(annotations)})
 
     @app.route("/api/annotations/<path:filename>/<box_id>", methods=["DELETE"])
+    @_requires_setup
     def api_delete_annotation(filename: str, box_id: str):
         annotations = _load_annotations(filename)
         annotations = [a for a in annotations if a.get("id") != box_id]
@@ -503,8 +544,15 @@ def create_app():
         return jsonify({"status": "deleted", "count": len(annotations)})
 
     @app.route("/api/delete-image/<path:filename>", methods=["POST"])
+    @_requires_setup
     def api_delete_image(filename: str):
         """Move an image to the deleted folder (not permanent delete)."""
+        # Strip any directory component so a crafted path can't move files
+        # from outside the input folder.
+        filename = Path(filename).name
+        if not filename:
+            return jsonify({"error": "File not found"}), 404
+
         src = _input_path() / filename
         if not src.is_file():
             return jsonify({"error": "File not found"}), 404
@@ -531,6 +579,7 @@ def create_app():
         return jsonify({"status": "deleted", "filename": filename})
 
     @app.route("/api/progress", methods=["GET"])
+    @_requires_setup
     def api_get_progress():
         images = _list_images()
         progress = _load_progress()
@@ -545,6 +594,7 @@ def create_app():
         })
 
     @app.route("/api/progress/<path:filename>", methods=["POST"])
+    @_requires_setup
     def api_update_progress(filename: str):
         data = request.get_json()
         status = data.get("status")
@@ -558,6 +608,7 @@ def create_app():
         return jsonify({"status": "updated"})
 
     @app.route("/api/export", methods=["POST"])
+    @_requires_setup
     def api_export():
         """Re-export all annotations to YOLO format."""
         images = _list_images()

@@ -1,5 +1,13 @@
 # Changelog
 
+## 2026-07-25
+- Fixed `/api/list-dir` returning a 500 when enumerating `/mnt` on WSL — a mapped-but-disconnected drive raised `OSError` and broke the whole folder picker
+- Data APIs now return `409 {"needs_setup": true}` instead of a 500 traceback when no session is configured; the labeling page redirects to Setup when it sees that flag, which is what happens when a remembered input folder has moved
+- Frame counts now come from ffmpeg's own `frame=` progress output instead of counting PNGs on disk, so re-extracting into a folder that already has frames no longer reports inflated totals
+- YOLO export clamps coordinates to 0–1; boxes are clamped at the edges and the center re-derived so it stays consistent with the clamped width/height, and fully offscreen boxes are dropped rather than exported as zero-area
+- `/api/delete-image` strips directory components from the filename so a crafted path can't move files from outside the input folder
+- Added regression tests for all of the above (50 tests total)
+
 ## 2026-04-14
 - Added a **home screen** as the app's landing page with two modes: **Prepare Dataset** and **Label Imagery**
 - Added a **Prepare Dataset** flow that turns a folder of videos into a folder of still images directly from the UI

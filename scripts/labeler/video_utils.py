@@ -101,13 +101,20 @@ def extract_frames_from_video(
     assert proc.stdout is not None
 
     # ffmpeg -progress emits key=value lines; `out_time_ms` is the current
-    # output time in microseconds (confusingly named).
+    # output time in microseconds (confusingly named) and `frame` is the
+    # running count of frames written.
+    frames_written = None
     for line in proc.stdout:
         line = line.strip()
         if not line or "=" not in line:
             continue
         key, _, value = line.partition("=")
-        if key == "out_time_ms" and progress_callback is not None:
+        if key == "frame":
+            try:
+                frames_written = int(value)
+            except ValueError:
+                pass
+        elif key == "out_time_ms" and progress_callback is not None:
             try:
                 seconds = int(value) / 1_000_000
                 progress_callback(seconds, duration)
@@ -119,6 +126,10 @@ def extract_frames_from_video(
         err = proc.stderr.read() if proc.stderr else ""
         raise RuntimeError(f"ffmpeg failed on {video_path.name}: {err.strip()}")
 
+    # Count what this run wrote, not what happens to be sitting in the folder —
+    # a previous extraction at a different fps leaves stale frames behind.
+    if frames_written is not None:
+        return frames_written
     return len(list(dest.glob("*.png")))
 
 

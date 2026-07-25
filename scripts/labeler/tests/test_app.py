@@ -6,6 +6,8 @@ Exercises every route to identify 500 errors and verify correct behavior.
 import json
 from pathlib import Path
 
+import pytest
+
 
 # ── Home / landing page ──
 
@@ -325,3 +327,78 @@ class TestSessionRestore:
         assert "input_dir" in data
         assert "labels" in data
 
+
+# ── Unconfigured access ──
+#
+# These routes all read the session dict. Before the _requires_setup guard
+# they raised a bare KeyError and returned a 500 traceback to the browser.
+
+class TestUnconfiguredAccess:
+    @pytest.mark.parametrize("method,route", [
+        ("get", "/api/images"),
+        ("get", "/api/image/frame_001.png"),
+        ("get", "/api/annotations/frame_001.png"),
+        ("post", "/api/annotations/frame_001.png"),
+        ("delete", "/api/annotations/frame_001.png/abc"),
+        ("post", "/api/delete-image/frame_001.png"),
+        ("get", "/api/progress"),
+        ("post", "/api/progress/frame_001.png"),
+        ("post", "/api/export"),
+    ])
+    def test_returns_409_not_500(self, client, method, route):
+        resp = getattr(client, method)(route, json={})
+        assert resp.status_code == 409
+        assert resp.get_json()["needs_setup"] is True
+
+
+# ── Path traversal ──
+
+class TestPathTraversal:
+    def test_delete_image_cannot_escape_input_dir(self, configured_client, tmp_dirs):
+        outside = tmp_dirs["root"] / "secret.png"
+        outside.write_bytes(b"do not move me")
+
+        resp = configured_client.post("/api/delete-image/..%2Fsecret.png")
+        assert resp.status_code == 404
+        assert outside.exists()
+
+
+# ── Coordinate clamping ──
+
+class TestCoordinateClamping:
+    def _label_lines(self, client, name="frame_001"):
+        output_dir = Path(client.get("/api/current-config").get_json()["output_dir"])
+        return (output_dir / "labels" / f"{name}.txt").read_text().strip().split("\n")
+
+    def test_box_beyond_edges_is_clamped(self, configured_client):
+        configured_client.post("/api/annotations/frame_001.png", json={
+            "annotations": [{
+                "class_id": 0, "x": -0.2, "y": -0.1, "w": 1.5, "h": 1.4, "type": "box",
+            }],
+        })
+        cls, cx, cy, w, h = self._label_lines(configured_client)[0].split()
+        for v in (cx, cy, w, h):
+            assert 0.0 <= float(v) <= 1.0
+        # x spans -0.2..1.3 -> clamps to 0..1, so center 0.5 and width 1.0
+        assert float(cx) == pytest.approx(0.5)
+        assert float(w) == pytest.approx(1.0)
+
+    def test_polygon_points_are_clamped(self, configured_client):
+        configured_client.post("/api/annotations/frame_001.png", json={
+            "annotations": [{
+                "class_id": 1,
+                "type": "polygon",
+                "points": [[-0.5, 0.2], [1.8, 0.4], [0.5, -0.3]],
+            }],
+        })
+        coords = [float(v) for v in self._label_lines(configured_client)[0].split()[1:]]
+        assert all(0.0 <= v <= 1.0 for v in coords)
+
+    def test_fully_offscreen_box_is_dropped(self, configured_client):
+        configured_client.post("/api/annotations/frame_001.png", json={
+            "annotations": [{
+                "class_id": 0, "x": 1.2, "y": 1.2, "w": 0.3, "h": 0.3, "type": "box",
+            }],
+        })
+        output_dir = Path(configured_client.get("/api/current-config").get_json()["output_dir"])
+        assert (output_dir / "labels" / "frame_001.txt").read_text() == ""

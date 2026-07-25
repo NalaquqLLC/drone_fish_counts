@@ -71,6 +71,14 @@ const statusMsg = document.getElementById("status-message");
 async function init() {
     const resp = await fetch("/api/images");
     const data = await resp.json();
+
+    // Session went away (e.g. the remembered input folder moved) — the page
+    // loaded but the API can't serve it. Send the user back to Setup.
+    if (data.needs_setup) {
+        window.location.href = "/setup";
+        return;
+    }
+
     images = data.images;
 
     if (images.length === 0) {
