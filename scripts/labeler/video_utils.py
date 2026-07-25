@@ -1,8 +1,10 @@
-"""Video-to-frame extraction utilities for the labeling tool.
+"""Video-to-frame and raw-image conversion utilities for the labeling tool.
 
 Uses a bundled ffmpeg binary via `imageio-ffmpeg` so end users don't need to
 install ffmpeg themselves. Falls back to the system `ffmpeg` on PATH if the
 package isn't available (useful for dev without the dep installed).
+
+Raw image conversion (DNG, CR2, NEF, etc.) uses `rawpy` + `Pillow`.
 """
 
 from __future__ import annotations
@@ -14,6 +16,7 @@ from pathlib import Path
 from typing import Callable, Optional
 
 VIDEO_EXTENSIONS = {".mp4", ".mov", ".avi", ".mkv", ".m4v", ".mpg", ".mpeg", ".wmv"}
+RAW_EXTENSIONS = {".dng", ".cr2", ".cr3", ".nef", ".arw", ".orf", ".rw2", ".raf"}
 
 
 def get_ffmpeg_exe() -> str:
@@ -180,6 +183,64 @@ def extract_batch(
 
     emit(total - 1, videos[-1].name, 1.0, total_frames, "done", f"Extracted {total_frames} frames from {total} videos")
     return {"video_count": total, "total_frames": total_frames, "output_dir": str(output_dir)}
+
+
+def list_raw_images(image_dir: Path) -> list[Path]:
+    """Return sorted list of raw image files (DNG, CR2, etc.) in a directory."""
+    return sorted(
+        p for p in image_dir.iterdir()
+        if p.is_file() and p.suffix.lower() in RAW_EXTENSIONS
+    )
+
+
+def convert_raw_image(raw_path: Path, output_dir: Path, quality: int = 95) -> Path:
+    """Convert a single raw image to JPG. Returns the output path."""
+    import rawpy
+    from PIL import Image
+
+    with rawpy.imread(str(raw_path)) as raw:
+        rgb = raw.postprocess()
+    img = Image.fromarray(rgb)
+    dest = output_dir / f"{raw_path.stem}.jpg"
+    img.save(str(dest), "JPEG", quality=quality)
+    return dest
+
+
+def convert_raw_batch(
+    image_dir: Path,
+    output_dir: Path,
+    quality: int = 95,
+    progress_callback: Optional[Callable[[dict], None]] = None,
+) -> dict:
+    """Convert all raw images in `image_dir` to JPG in `output_dir`."""
+    raws = list_raw_images(image_dir)
+    if not raws:
+        return {"raw_count": 0, "output_dir": str(output_dir)}
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    total = len(raws)
+
+    for i, raw_path in enumerate(raws):
+        if progress_callback:
+            progress_callback({
+                "raw_index": i,
+                "raw_total": total,
+                "raw_name": raw_path.name,
+                "raw_progress": i / total,
+                "message": f"Converting {raw_path.name}",
+            })
+        convert_raw_image(raw_path, output_dir, quality=quality)
+
+    if progress_callback:
+        progress_callback({
+            "raw_index": total - 1,
+            "raw_total": total,
+            "raw_name": raws[-1].name,
+            "raw_progress": 1.0,
+            "message": f"Converted {total} raw images",
+        })
+
+    return {"raw_count": total, "output_dir": str(output_dir)}
 
 
 def flatten_output(output_dir: Path) -> int:

@@ -20,7 +20,14 @@ from threading import Timer
 
 from flask import Flask, abort, jsonify, redirect, render_template, request, send_from_directory, url_for
 
-from video_utils import extract_batch, flatten_output, list_videos
+from video_utils import (
+    RAW_EXTENSIONS,
+    convert_raw_batch,
+    extract_batch,
+    flatten_output,
+    list_raw_images,
+    list_videos,
+)
 
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".tiff", ".tif", ".webp"}
 
@@ -45,10 +52,32 @@ def _default_output_dir() -> Path:
     return _app_dir() / "labeling_output"
 
 
+def _bundle_dir() -> Path:
+    """Base directory for bundled assets (templates, static)."""
+    if getattr(sys, "frozen", False):
+        return Path(sys._MEIPASS)
+    return Path(__file__).parent
+
+
 def create_app():
     """Create the Flask labeling application."""
-    app = Flask(__name__)
+    import traceback as _tb
+
+    base = _bundle_dir()
+    app = Flask(
+        __name__,
+        template_folder=str(base / "templates"),
+        static_folder=str(base / "static"),
+    )
     app.config["SESSION"] = {}  # runtime state: input_dir, output_dir, labels, colors
+
+    @app.errorhandler(Exception)
+    def handle_exception(e):
+        from werkzeug.exceptions import HTTPException
+        if isinstance(e, HTTPException):
+            return e
+        tb = _tb.format_exception(type(e), e, e.__traceback__)
+        return f"<h2>Error: {type(e).__name__}</h2><pre>{''.join(tb)}</pre>", 500
 
     def _session():
         return app.config["SESSION"]
@@ -238,7 +267,7 @@ def create_app():
         flatten = bool(data.get("flatten", True))
 
         if not input_dir or not Path(input_dir).is_dir():
-            return jsonify({"error": f"Video folder not found: {input_dir}"}), 400
+            return jsonify({"error": f"Folder not found: {input_dir}"}), 400
         if not output_dir:
             return jsonify({"error": "Output folder is required"}), 400
         if fps <= 0:
@@ -248,8 +277,11 @@ def create_app():
         out_path = Path(output_dir).resolve()
 
         videos = list_videos(in_path)
-        if not videos:
-            return jsonify({"error": f"No video files found in {in_path}"}), 400
+        raws = list_raw_images(in_path)
+        if not videos and not raws:
+            return jsonify({"error": f"No video or raw image files found in {in_path}"}), 400
+
+        total_items = len(videos) + len(raws)
 
         with prepare_lock:
             if prepare_state["status"] == "running":
@@ -257,7 +289,7 @@ def create_app():
             prepare_state.update({
                 "status": "running",
                 "video_index": 0,
-                "video_total": len(videos),
+                "video_total": total_items,
                 "video_name": "",
                 "video_progress": 0.0,
                 "overall_progress": 0.0,
@@ -266,22 +298,61 @@ def create_app():
                 "output_dir": str(out_path),
             })
 
-        def on_progress(state: dict) -> None:
+        def on_video_progress(state: dict) -> None:
             _update_prepare(**state, output_dir=str(out_path))
 
         def worker():
             try:
                 out_path.mkdir(parents=True, exist_ok=True)
-                extract_batch(in_path, out_path, fps=fps, progress_callback=on_progress)
+                total_frames = 0
+
+                if videos:
+                    extract_batch(in_path, out_path, fps=fps, progress_callback=on_video_progress)
+                    total_frames += sum(1 for _ in out_path.rglob("*.png"))
+
+                if raws:
+                    def on_raw_progress(state: dict) -> None:
+                        ri = state["raw_index"]
+                        rt = state["raw_total"]
+                        offset = len(videos)
+                        overall = (offset + ri + state["raw_progress"]) / total_items
+                        _update_prepare(
+                            video_index=offset + ri,
+                            video_total=total_items,
+                            video_name=state["raw_name"],
+                            video_progress=state["raw_progress"],
+                            overall_progress=overall,
+                            frames_done=total_frames + ri,
+                            status="running",
+                            message=state["message"],
+                            output_dir=str(out_path),
+                        )
+
+                    result = convert_raw_batch(in_path, out_path, progress_callback=on_raw_progress)
+                    total_frames += result["raw_count"]
+
                 if flatten:
                     _update_prepare(status="running", message="Organizing files…")
                     flatten_output(out_path)
-                _update_prepare(status="done", message=f"Done! Images saved to {out_path}", output_dir=str(out_path), overall_progress=1.0)
+
+                parts = []
+                if videos:
+                    parts.append(f"{len(videos)} video{'s' if len(videos) != 1 else ''}")
+                if raws:
+                    parts.append(f"{len(raws)} raw image{'s' if len(raws) != 1 else ''}")
+                summary = " and ".join(parts)
+                _update_prepare(
+                    status="done",
+                    message=f"Done! Processed {summary}. Images saved to {out_path}",
+                    output_dir=str(out_path),
+                    overall_progress=1.0,
+                    frames_done=total_frames,
+                )
             except Exception as e:
                 _update_prepare(status="error", message=str(e))
 
         threading.Thread(target=worker, daemon=True).start()
-        return jsonify({"status": "started", "video_count": len(videos)})
+        return jsonify({"status": "started", "video_count": len(videos), "raw_count": len(raws)})
 
     @app.route("/api/prepare/status", methods=["GET"])
     def api_prepare_status():
@@ -521,8 +592,27 @@ def create_app():
 
 def main():
     """Entry point — launch the labeling tool."""
-    port = 5000
-    app = create_app()
+    import logging
+
+    port = 5555
+    log_file = _app_dir() / "fishlabeler.log"
+    logging.basicConfig(
+        filename=str(log_file),
+        level=logging.DEBUG,
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+    )
+    logger = logging.getLogger("fishlabeler")
+
+    try:
+        app = create_app()
+    except Exception:
+        logger.exception("Failed to create app")
+        raise
+
+    logger.info("Templates: %s", app.template_folder)
+    logger.info("Static: %s", app.static_folder)
+    logger.info("App dir: %s", _app_dir())
+    logger.info("Bundle dir: %s", _bundle_dir())
 
     Timer(1.5, lambda: webbrowser.open(f"http://localhost:{port}")).start()
 

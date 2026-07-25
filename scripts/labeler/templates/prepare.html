@@ -188,18 +188,18 @@
     <div class="card">
         <div class="breadcrumb"><a href="/">&larr; Home</a></div>
         <h1>Prepare Dataset</h1>
-        <p class="subtitle">Extract still images from a folder of videos so you can label them.</p>
+        <p class="subtitle">Extract frames from videos or convert raw images (DNG, CR2, NEF, etc.) to JPG for labeling.</p>
 
         <div id="error-msg" class="error-msg"></div>
 
         <div id="setup-form">
             <div class="form-group">
-                <label>Step 1 &middot; Folder containing your videos</label>
+                <label>Step 1 &middot; Folder containing your videos or raw images</label>
                 <div class="dir-row">
-                    <input type="text" id="input-dir" placeholder="/path/to/videos">
+                    <input type="text" id="input-dir" placeholder="/path/to/videos-or-raw-images">
                     <button class="btn-browse" onclick="openBrowser('input-dir')">Browse</button>
                 </div>
-                <p class="hint-text">Supported formats: .mp4, .mov, .avi, .mkv, and more.</p>
+                <p class="hint-text">Videos: .mp4, .mov, .avi, .mkv &nbsp;|&nbsp; Raw images: .dng, .cr2, .cr3, .nef, .arw</p>
             </div>
 
             <div class="form-group">
@@ -212,10 +212,10 @@
             </div>
 
             <div class="form-group">
-                <label>Step 3 &middot; Frames per second</label>
+                <label>Step 3 &middot; Frames per second (videos only)</label>
                 <div class="fps-row">
                     <input type="number" id="fps" value="1" min="0.1" max="30" step="0.1">
-                    <span class="hint">1 fps is a good default for fish counting videos.</span>
+                    <span class="hint">1 fps is a good default for fish counting videos. Raw images are converted 1:1.</span>
                 </div>
             </div>
 
