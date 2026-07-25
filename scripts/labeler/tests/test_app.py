@@ -328,6 +328,90 @@ class TestSessionRestore:
         assert "labels" in data
 
 
+# ── Point annotations ──
+
+class TestPointAnnotations:
+    def _output_dir(self, client):
+        return Path(client.get("/api/current-config").get_json()["output_dir"])
+
+    def test_point_round_trips(self, configured_client):
+        resp = configured_client.post("/api/annotations/frame_001.png", json={
+            "annotations": [{"class_id": 0, "type": "point", "x": 0.25, "y": 0.75}],
+        })
+        assert resp.status_code == 200
+
+        data = configured_client.get("/api/annotations/frame_001.png").get_json()
+        assert len(data["annotations"]) == 1
+        assert data["annotations"][0]["type"] == "point"
+
+    def test_point_writes_points_file(self, configured_client):
+        configured_client.post("/api/annotations/frame_001.png", json={
+            "annotations": [
+                {"class_id": 0, "type": "point", "x": 0.25, "y": 0.75},
+                {"class_id": 2, "type": "point", "x": 0.5, "y": 0.5},
+            ],
+        })
+        pts = self._output_dir(configured_client) / "points" / "frame_001.txt"
+        lines = pts.read_text().strip().split("\n")
+        assert len(lines) == 2
+        assert lines[0].split() == ["0", "0.250000", "0.750000"]
+
+    def test_points_excluded_from_yolo_labels(self, configured_client):
+        """A point has no width or height — emitting it as a box would
+        write a zero-area detection and corrupt training."""
+        configured_client.post("/api/annotations/frame_001.png", json={
+            "annotations": [
+                {"class_id": 0, "type": "point", "x": 0.25, "y": 0.75},
+                {"class_id": 1, "x": 0.1, "y": 0.1, "w": 0.2, "h": 0.2, "type": "box"},
+            ],
+        })
+        label_file = self._output_dir(configured_client) / "labels" / "frame_001.txt"
+        lines = [l for l in label_file.read_text().strip().split("\n") if l]
+        assert len(lines) == 1
+        assert lines[0].startswith("1 ")
+
+    def test_point_coordinates_are_clamped(self, configured_client):
+        configured_client.post("/api/annotations/frame_001.png", json={
+            "annotations": [{"class_id": 0, "type": "point", "x": -0.4, "y": 1.6}],
+        })
+        pts = self._output_dir(configured_client) / "points" / "frame_001.txt"
+        _, x, y = pts.read_text().strip().split()
+        assert float(x) == 0.0
+        assert float(y) == 1.0
+
+    def test_export_writes_counts_csv(self, configured_client):
+        configured_client.post("/api/annotations/frame_001.png", json={
+            "annotations": [
+                {"class_id": 0, "type": "point", "x": 0.2, "y": 0.2},
+                {"class_id": 0, "type": "point", "x": 0.3, "y": 0.3},
+                {"class_id": 1, "x": 0.1, "y": 0.1, "w": 0.2, "h": 0.2, "type": "box"},
+            ],
+        })
+        resp = configured_client.post("/api/export")
+        data = resp.get_json()
+        assert data["point_totals"]["king"] == 2
+        assert data["totals"]["red"] == 1
+
+        csv_text = (self._output_dir(configured_client) / "counts.csv").read_text()
+        rows = [r.split(",") for r in csv_text.strip().split("\n")]
+        assert rows[0][0] == "image"
+        king_row = next(r for r in rows[1:] if r[2] == "king")
+        assert king_row[3] == "2"   # points
+        assert king_row[6] == "2"   # total
+
+    def test_counts_csv_quotes_names_with_commas(self, configured_client, tmp_dirs):
+        awkward = tmp_dirs["input"] / "frame,004.png"
+        awkward.write_bytes((tmp_dirs["input"] / "frame_001.png").read_bytes())
+
+        configured_client.post("/api/annotations/frame,004.png", json={
+            "annotations": [{"class_id": 0, "type": "point", "x": 0.2, "y": 0.2}],
+        })
+        configured_client.post("/api/export")
+
+        csv_text = (self._output_dir(configured_client) / "counts.csv").read_text()
+        assert '"frame,004.png"' in csv_text
+
+
 # ── Unconfigured access ──
 #
 # These routes all read the session dict. Before the _requires_setup guard

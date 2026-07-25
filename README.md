@@ -91,3 +91,20 @@ The labeling tool exports annotations in **YOLO format**:
 - `dataset.yaml` — YOLO training configuration file
 
 These outputs are ready to use directly with [Ultralytics YOLOv8](https://docs.ultralytics.com/) or similar frameworks.
+
+### Counting output
+
+Point annotations are counting marks rather than training targets, so they are exported separately and never written into `labels/*.txt` — a point has no width or height, and a zero-area box would corrupt training.
+
+- `points/*.txt` — one file per image, `class_id x y` (normalized 0–1), one point per line
+- `counts.csv` — per-image, per-species tally with `points`, `boxes`, `polygons`, and `total` columns
+
+## Annotation Modes
+
+| Mode | Key | Use for |
+|------|-----|---------|
+| Polygon (default) | `P` | Segmentation masks — the primary annotation type |
+| Box | `B` | Faster rectangular detection labels |
+| Point | `C` | Counting fish without outlining them |
+
+All shapes render as outlines with transparent interiors so the labeled fish stays visible.

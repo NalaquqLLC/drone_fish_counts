@@ -25,22 +25,30 @@
             <div id="mode-panel">
                 <h3>Tool</h3>
                 <div id="mode-toggle">
-                    <button class="mode-btn active" data-mode="box" title="Bounding box (B)">Box</button>
-                    <button class="mode-btn" data-mode="polygon" title="Polygon mask (P)">Polygon</button>
+                    <button class="mode-btn active" data-mode="polygon" title="Polygon mask (P)">Polygon</button>
+                    <button class="mode-btn" data-mode="box" title="Bounding box (B)">Box</button>
+                    <button class="mode-btn" data-mode="point" title="Point / count (C)">Point</button>
                 </div>
             </div>
 
             <div id="labels-panel">
                 <h3>Labels</h3>
-                <p class="hint">Select a label, then draw on the image. In polygon mode, click to add points; double-click or Enter to finish.</p>
+                <p class="hint" id="mode-hint"></p>
                 {% for class_id, name in labels.items() %}
                 <button class="species-btn" data-class-id="{{ class_id }}"
+                        data-color="{{ colors[class_id] }}"
                         style="--species-color: {{ colors[class_id] }}">
                     <span class="color-swatch" style="background: {{ colors[class_id] }}"></span>
                     {{ name | capitalize }}
                     <span class="shortcut-key">{{ class_id + 1 }}</span>
                 </button>
                 {% endfor %}
+            </div>
+
+            <div id="counts-panel">
+                <h3>Counts <span class="hint-inline">this image</span></h3>
+                <ul id="counts-list"></ul>
+                <p id="no-counts" class="hint">Nothing marked yet.</p>
             </div>
 
             <div id="annotations-panel">
@@ -72,7 +80,7 @@
             <div id="help-panel">
                 <h3>Shortcuts</h3>
                 <ul class="help-list">
-                    <li><kbd>B</kbd>/<kbd>P</kbd> Box / Polygon mode</li>
+                    <li><kbd>P</kbd>/<kbd>B</kbd>/<kbd>C</kbd> Polygon / Box / Point</li>
                     <li><kbd>1</kbd>-<kbd>9</kbd> Select label</li>
                     <li><kbd>Left</kbd>/<kbd>Right</kbd> Navigate</li>
                     <li><kbd>Ctrl+S</kbd> Save</li>

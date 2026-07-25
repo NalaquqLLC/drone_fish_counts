@@ -9,6 +9,8 @@ Provides a web UI with:
 - YOLO detection and YOLO-seg format export
 """
 
+import csv
+import io
 import json
 import sys
 import threading
@@ -117,6 +119,7 @@ def create_app():
         output_dir.mkdir(parents=True, exist_ok=True)
         (output_dir / "annotations").mkdir(exist_ok=True)
         (output_dir / "labels").mkdir(exist_ok=True)
+        (output_dir / "points").mkdir(exist_ok=True)
         (output_dir / "deleted").mkdir(exist_ok=True)
 
     def _restore_last_session() -> bool:
@@ -157,6 +160,9 @@ def create_app():
 
     def _labels_dir():
         return _output_path() / "labels"
+
+    def _points_dir():
+        return _output_path() / "points"
 
     def _deleted_dir():
         return _output_path() / "deleted"
@@ -208,6 +214,10 @@ def create_app():
         stem = Path(filename).stem
         return _labels_dir() / f"{stem}.txt"
 
+    def _point_path(filename: str) -> Path:
+        stem = Path(filename).stem
+        return _points_dir() / f"{stem}.txt"
+
     def _load_annotations(filename: str) -> list[dict]:
         p = _annotation_path(filename)
         if p.exists():
@@ -217,6 +227,7 @@ def create_app():
     def _save_annotations(filename: str, annotations: list[dict]) -> None:
         _annotation_path(filename).write_text(json.dumps(annotations, indent=2))
         _export_yolo(filename, annotations)
+        _export_points(filename, annotations)
 
     def _clamp(v: float) -> float:
         """Constrain a normalized coordinate to [0, 1].
@@ -231,10 +242,16 @@ def create_app():
 
         Box annotations emit YOLO detection format: `class cx cy w h`.
         Polygon annotations emit YOLO-seg format: `class x1 y1 x2 y2 ...`.
+
+        Point annotations are counting marks, not detections — YOLO has no
+        representation for them and a zero-area box would poison training, so
+        they are written separately by `_export_points`.
         """
         lines = []
         for ann in annotations:
             cls = ann["class_id"]
+            if ann.get("type") == "point":
+                continue
             if ann.get("type") == "polygon":
                 pts = ann.get("points", [])
                 if len(pts) < 3:
@@ -254,6 +271,26 @@ def create_app():
                     continue
                 lines.append(f"{cls} {x0 + w / 2:.6f} {y0 + h / 2:.6f} {w:.6f} {h:.6f}")
         _label_path(filename).write_text("\n".join(lines) + "\n" if lines else "")
+
+    def _export_points(filename: str, annotations: list[dict]) -> None:
+        """Write point annotations as `class_id x y` (normalized), one per line."""
+        lines = [
+            f"{ann['class_id']} {_clamp(ann['x']):.6f} {_clamp(ann['y']):.6f}"
+            for ann in annotations
+            if ann.get("type") == "point"
+        ]
+        _point_path(filename).write_text("\n".join(lines) + "\n" if lines else "")
+
+    def _count_annotations(annotations: list[dict]) -> dict[int, dict[str, int]]:
+        """Tally annotations per class, split by type."""
+        tally: dict[int, dict[str, int]] = {}
+        for ann in annotations:
+            kind = ann.get("type") or "box"
+            if kind not in ("box", "polygon", "point"):
+                kind = "box"
+            row = tally.setdefault(ann["class_id"], {"box": 0, "polygon": 0, "point": 0})
+            row[kind] += 1
+        return tally
 
     # ─── Prepare-dataset state (single-job, in-memory) ───
     prepare_state: dict = {
@@ -610,13 +647,16 @@ def create_app():
     @app.route("/api/export", methods=["POST"])
     @_requires_setup
     def api_export():
-        """Re-export all annotations to YOLO format."""
+        """Re-export all annotations to YOLO format, points, and counts."""
         images = _list_images()
         exported = 0
+        per_image_counts: list[tuple[str, dict[int, dict[str, int]]]] = []
         for img_name in images:
             annotations = _load_annotations(img_name)
             if annotations:
                 _export_yolo(img_name, annotations)
+                _export_points(img_name, annotations)
+                per_image_counts.append((img_name, _count_annotations(annotations)))
                 exported += 1
 
         s = _session()
@@ -636,7 +676,34 @@ def create_app():
             f"names:\n"
             + "".join(f"  {i}: {name}\n" for i, name in sorted(labels.items()))
         )
-        return jsonify({"status": "exported", "count": exported})
+
+        # Per-image tally so counting work is usable without parsing labels.
+        # Points, boxes and masks are broken out because a point is a count
+        # while the other two are training annotations that happen to imply one.
+        totals = {i: 0 for i in labels}
+        point_totals = {i: 0 for i in labels}
+        buf = io.StringIO()
+        writer = csv.writer(buf, lineterminator="\n")
+        writer.writerow(["image", "class_id", "class_name", "points", "boxes", "polygons", "total"])
+        for img_name, tally in per_image_counts:
+            for class_id in sorted(tally):
+                c = tally[class_id]
+                total = c["point"] + c["box"] + c["polygon"]
+                writer.writerow([
+                    img_name, class_id, labels.get(class_id, f"class_{class_id}"),
+                    c["point"], c["box"], c["polygon"], total,
+                ])
+                if class_id in totals:
+                    totals[class_id] += total
+                    point_totals[class_id] += c["point"]
+        (_output_path() / "counts.csv").write_text(buf.getvalue())
+
+        return jsonify({
+            "status": "exported",
+            "count": exported,
+            "totals": {labels[i]: totals[i] for i in sorted(totals)},
+            "point_totals": {labels[i]: point_totals[i] for i in sorted(point_totals)},
+        })
 
     return app
 

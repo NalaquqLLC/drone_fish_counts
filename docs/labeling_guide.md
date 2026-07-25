@@ -60,25 +60,49 @@ When you relaunch the tool, it remembers your last session. Click **Label Imager
 
 ### The Interface
 
-- **Left sidebar** — Species labels, annotation list, navigation, and action buttons
-- **Center** — The image you're labeling with a canvas for drawing boxes
+- **Left sidebar** — Tool mode, species labels, live counts, annotation list, navigation, and action buttons
+- **Center** — The image you're labeling with a canvas for drawing
 - **Top bar** — Progress tracker
+
+### Drawing a Segmentation Mask
+
+The tool opens in **Polygon** mode, which is what you'll use for most work.
+
+1. **Select a species** from the sidebar (or press `1`-`5` on your keyboard)
+2. **Click around the outline of the fish** to place vertices
+3. **Double-click** or press `Enter` to close the mask (`Esc` cancels)
+
+Trace as close to the fish body as you can, following its actual shape from nose to tail. The outline is drawn in the species color with a transparent interior, so you can see exactly what you've captured.
 
 ### Drawing a Bounding Box
 
-1. **Select a species** from the sidebar (or press `1`-`5` on your keyboard)
+Switch to **Box** mode (press `B`) when a rectangle is good enough and you want to move faster.
+
+1. **Select a species** from the sidebar (or press `1`-`5`)
 2. **Click and drag** on the image to draw a rectangle around a fish
 3. The box appears with the species label and color
 
 Draw the box as tight as possible around the fish body. Include the full fish from nose to tail, but don't include excessive background.
 
-### Editing Boxes
+### Counting Without Labeling
 
-- **Select a box** — Click on an existing box to select it (highlighted with handles)
+Switch to **Point** mode (press `C`) when you only need a tally.
+
+1. **Select a species** from the sidebar (or press `1`-`5`)
+2. **Click once on each fish** — a crosshair marker appears
+3. Watch the running total in the **Counts** panel
+
+Point mode ignores existing boxes and masks, so you can count freely over an already-annotated image.
+
+### Editing Annotations
+
+- **Select** — Click an existing shape or marker to select it
 - **Move a box** — Click and drag a selected box to reposition it
 - **Resize a box** — Drag the corner handles of a selected box
-- **Change species** — Select a box, then click a different species button (or press `1`-`5`)
-- **Delete a box** — Select a box and press `Delete` or `Backspace`
+- **Reshape a mask** — Select a polygon, then drag its individual vertices
+- **Move a point** — Drag a selected marker
+- **Change species** — Select anything, then click a different species button (or press `1`-`5`)
+- **Delete** — Select it and press `Delete` or `Backspace`
 
 ### Zooming In
 
@@ -113,29 +137,42 @@ Your progress is saved to disk, so you can close the tool and come back anytime.
 
 ## Annotation Modes
 
-The sidebar has a **Box** / **Polygon** toggle:
+The sidebar has a **Polygon** / **Box** / **Point** toggle. **Polygon is the default.**
 
-- **Box mode** (press `B`) — click and drag a rectangle. Best for most fish.
-- **Polygon mode** (press `P`) — click to place vertices around the fish, double-click or press `Enter` to finish, `Esc` to cancel. Use this when you need a tight segmentation mask instead of a rectangle. Select a finished polygon to drag individual vertices.
+- **Polygon mode** (press `P`) — click to place vertices around the fish, double-click or press `Enter` to finish, `Esc` to cancel. This traces a tight segmentation mask around the fish. Select a finished polygon to drag individual vertices.
+- **Box mode** (press `B`) — click and drag a rectangle. Faster than a polygon, but less precise.
+- **Point mode** (press `C`) — click once on each fish to count it. Use this when you only need a tally and don't need to outline anything. Drag a marker to nudge it; select one and press `Delete` to remove it.
 
-Box annotations export as YOLO detection format; polygon annotations export as YOLO-seg format. You can mix the two in the same dataset.
+All shapes are drawn as **outlines with a transparent interior**, so the fish stays visible while you work.
+
+The **Counts** panel in the sidebar shows a running per-species tally for the current image, covering points, boxes, and masks.
+
+### Which mode should I use?
+
+| Goal | Mode |
+|------|------|
+| Training a segmentation model (most precise) | Polygon |
+| Training a detection model (faster to draw) | Box |
+| Just counting fish — no model training | Point |
+
+You can mix all three in the same dataset. Polygons export as YOLO-seg, boxes as YOLO detection, and points to a separate counts file — points are **not** written into the YOLO label files, because a point has no width or height and a zero-size box would corrupt training.
 
 ## Keyboard Shortcuts
 
 | Key | Action |
 |-----|--------|
 | `1`-`5` | Select species (king, red, silver, chum, pink) |
-| `B` / `P` | Switch between Box and Polygon annotation modes |
+| `P` / `B` / `C` | Switch between Polygon, Box, and Point modes |
 | Left / Right arrow | Previous / next image |
 | `Ctrl+S` | Save annotations |
 | `Enter` | Mark done and go to next image |
 | `S` | Skip image |
 | `D` | Delete image (no fish) |
-| `Delete` / `Backspace` | Remove selected bounding box |
-| `Escape` | Cancel drawing or deselect box |
+| `Delete` / `Backspace` | Remove selected annotation |
+| `Escape` | Cancel drawing or deselect |
 | Scroll wheel | Zoom in/out |
 | `Ctrl` + drag | Pan when zoomed |
-| Double-click | Reset zoom |
+| Double-click | Reset zoom (not in Point mode — a double-click there counts two fish) |
 
 ## Exporting
 
@@ -143,11 +180,13 @@ When you've finished labeling (or want to checkpoint your work):
 
 1. Click the **Export YOLO** button in the sidebar
 2. This generates:
-   - `labels/*.txt` — YOLO-format label files (one per image)
+   - `labels/*.txt` — YOLO-format label files (one per image), boxes and masks
+   - `points/*.txt` — Point annotations as `class_id x y` (normalized), one per line
+   - `counts.csv` — Per-image, per-species tally with points, boxes, polygons, and total
    - `classes.txt` — List of class names
    - `dataset.yaml` — YOLO training config
 
-These files are written to your output directory and are ready for model training.
+These files are written to your output directory and are ready for model training. If you only did counting work, `counts.csv` is the file you want.
 
 ## Tips for Good Labels
 

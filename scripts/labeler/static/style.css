@@ -180,6 +180,43 @@ header h1 {
     color: #aaa;
 }
 
+/* Counts panel */
+
+#counts-panel {
+    margin-bottom: 12px;
+    flex-shrink: 0;
+}
+
+.hint-inline {
+    font-size: 11px;
+    font-weight: 400;
+    color: #666;
+}
+
+#counts-list {
+    list-style: none;
+}
+
+#counts-list li {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 8px;
+    font-size: 13px;
+    color: #e0e0e0;
+}
+
+#counts-list .count-value {
+    margin-left: auto;
+    font-variant-numeric: tabular-nums;
+    font-weight: 700;
+    background: #1a1a2e;
+    padding: 1px 8px;
+    border-radius: 10px;
+    min-width: 28px;
+    text-align: center;
+}
+
 /* Annotations list */
 
 #annotations-panel {

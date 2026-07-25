@@ -1,5 +1,18 @@
 # Changelog
 
+## 2026-07-25 (later)
+- Annotation interiors are now **transparent** — boxes and masks draw as outlines only, so the labeled fish stays visible while you inspect it
+  - Root cause of the white fill: label colors were read from the swatch's inline style, which the CSSOM normalizes from `#e6194b` to `rgb(230, 25, 75)`. The code then appended an alpha suffix (`color + "22"`), producing an invalid color string. Canvas silently ignores an invalid `fillStyle` assignment and keeps the previous value — which was the `#fff` left over from drawing handles and label text. Colors now come from a `data-color` attribute so they stay hex
+  - Outlines gained a dark under-stroke so they stay readable over bright water
+- The labeler now **defaults to Polygon (segmentation mask) mode** instead of Box; the mode toggle is reordered Polygon / Box / Point
+- Added a **Point** annotation type (press `C`) for counting fish rather than labeling them
+  - Click to place a crosshair marker, drag to nudge, `Delete` to remove
+  - Point mode ignores existing boxes and masks so you can count over an already-annotated image
+  - New **Counts** sidebar panel shows a live per-species tally for the current image
+  - Points export to `points/*.txt` (`class_id x y`, normalized) and a per-image `counts.csv`; they are deliberately excluded from `labels/*.txt` because a zero-area box would corrupt YOLO training
+  - Double-click no longer resets zoom in Point mode — there it counts two fish
+- Updated README and labeling guide for the three annotation modes and the counting output
+
 ## 2026-07-25
 - Fixed `/api/list-dir` returning a 500 when enumerating `/mnt` on WSL — a mapped-but-disconnected drive raised `OSError` and broke the whole folder picker
 - Data APIs now return `409 {"needs_setup": true}` instead of a 500 traceback when no session is configured; the labeling page redirects to Setup when it sees that flag, which is what happens when a remembered input folder has moved
