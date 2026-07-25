@@ -239,7 +239,7 @@ function drawPolygon(ann, selected) {
     }
     ctx.closePath();
 
-    ctx.fillStyle = color + "33";
+    ctx.fillStyle = color + "5";
     ctx.fill();
     ctx.strokeStyle = color;
     ctx.lineWidth = selected ? 3 : 2;
