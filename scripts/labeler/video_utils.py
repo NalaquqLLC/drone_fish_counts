@@ -9,6 +9,7 @@ Raw image conversion (DNG, CR2, NEF, etc.) uses `rawpy` + `Pillow`.
 
 from __future__ import annotations
 
+import importlib
 import re
 import shutil
 import subprocess
@@ -204,6 +205,20 @@ def list_raw_images(image_dir: Path) -> list[Path]:
     )
 
 
+def raw_support_available() -> bool:
+    """True if raw conversion dependencies (`rawpy`, `Pillow`) are importable.
+
+    Actually imports rather than checking for the module spec — both ship
+    native extensions that can be present but unloadable.
+    """
+    try:
+        importlib.import_module("rawpy")
+        importlib.import_module("PIL.Image")
+        return True
+    except ImportError:
+        return False
+
+
 def convert_raw_image(raw_path: Path, output_dir: Path, quality: int = 95) -> Path:
     """Convert a single raw image to JPG. Returns the output path."""
     import rawpy
@@ -223,13 +238,21 @@ def convert_raw_batch(
     quality: int = 95,
     progress_callback: Optional[Callable[[dict], None]] = None,
 ) -> dict:
-    """Convert all raw images in `image_dir` to JPG in `output_dir`."""
+    """Convert all raw images in `image_dir` to JPG in `output_dir`.
+
+    A file that can't be decoded is skipped rather than aborting the batch —
+    one corrupt card image shouldn't cost the user a long conversion run. The
+    returned dict reports `raw_count` converted and `failed` as a list of
+    (filename, error) pairs.
+    """
     raws = list_raw_images(image_dir)
     if not raws:
-        return {"raw_count": 0, "output_dir": str(output_dir)}
+        return {"raw_count": 0, "failed": [], "output_dir": str(output_dir)}
 
     output_dir.mkdir(parents=True, exist_ok=True)
     total = len(raws)
+    converted = 0
+    failed: list[tuple[str, str]] = []
 
     for i, raw_path in enumerate(raws):
         if progress_callback:
@@ -240,18 +263,27 @@ def convert_raw_batch(
                 "raw_progress": i / total,
                 "message": f"Converting {raw_path.name}",
             })
-        convert_raw_image(raw_path, output_dir, quality=quality)
+        try:
+            convert_raw_image(raw_path, output_dir, quality=quality)
+            converted += 1
+        except Exception as e:
+            # rawpy raises library-specific errors (LibRawIOError,
+            # LibRawFileUnsupportedError, ...) that share no common base.
+            failed.append((raw_path.name, f"{type(e).__name__}: {e}"))
 
     if progress_callback:
+        note = f"Converted {converted} raw images"
+        if failed:
+            note += f" ({len(failed)} could not be read)"
         progress_callback({
             "raw_index": total - 1,
             "raw_total": total,
             "raw_name": raws[-1].name,
             "raw_progress": 1.0,
-            "message": f"Converted {total} raw images",
+            "message": note,
         })
 
-    return {"raw_count": total, "output_dir": str(output_dir)}
+    return {"raw_count": converted, "failed": failed, "output_dir": str(output_dir)}
 
 
 def flatten_output(output_dir: Path) -> int:

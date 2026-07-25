@@ -68,7 +68,7 @@ Copy `FishLabeler.exe` to wherever the end user should run it from (e.g., the ro
 
 ## Testing the Build
 
-Double-click the new `FishLabeler.exe`. A browser should open to `http://localhost:5000` showing the home screen with two cards: **Prepare Dataset** and **Label Imagery**.
+Double-click the new `FishLabeler.exe`. A browser should open to `http://localhost:5555` showing the home screen with two cards: **Prepare Dataset** and **Label Imagery**.
 
 Quick smoke test:
 

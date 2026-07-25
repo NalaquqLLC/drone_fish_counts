@@ -328,6 +328,112 @@ class TestSessionRestore:
         assert "labels" in data
 
 
+# ── Data directory resolution ──
+#
+# The app writes last_session.json, fishlabeler.log and labeling_output/ into
+# _app_dir(). When the .exe sits somewhere read-only (Program Files, a locked
+# share, a write-protected stick) that used to kill startup outright.
+
+class TestDataDirFallback:
+    def test_prefers_install_dir_when_writable(self, tmp_path, monkeypatch):
+        import app as app_module
+        install = tmp_path / "app"
+        install.mkdir()
+        monkeypatch.setattr(app_module, "_install_dir", lambda: install)
+        monkeypatch.setattr(app_module, "_data_dir", None)
+
+        assert app_module._app_dir() == install
+
+    def test_falls_back_when_install_dir_is_read_only(self, tmp_path, monkeypatch):
+        import app as app_module
+        install = tmp_path / "program_files"
+        install.mkdir()
+        install.chmod(0o555)
+        fallback = tmp_path / "userdata"
+
+        monkeypatch.setattr(app_module, "_install_dir", lambda: install)
+        monkeypatch.setattr(app_module, "_user_data_dir", lambda: fallback)
+        monkeypatch.setattr(app_module, "_data_dir", None)
+        try:
+            assert app_module._app_dir() == fallback
+            assert fallback.is_dir()
+        finally:
+            install.chmod(0o755)
+
+    def test_app_starts_against_read_only_install_dir(self, tmp_path, monkeypatch):
+        """The whole point: creating the app must not raise."""
+        import app as app_module
+        install = tmp_path / "program_files"
+        install.mkdir()
+        install.chmod(0o555)
+        fallback = tmp_path / "userdata"
+
+        monkeypatch.setattr(app_module, "_install_dir", lambda: install)
+        monkeypatch.setattr(app_module, "_user_data_dir", lambda: fallback)
+        monkeypatch.setattr(app_module, "_data_dir", None)
+        try:
+            application = app_module.create_app()
+            application.config["TESTING"] = True
+            client = application.test_client()
+
+            images = tmp_path / "images"
+            images.mkdir()
+            resp = client.post("/api/setup", json={
+                "input_dir": str(images), "labels": ["king"],
+            })
+            assert resp.status_code == 200
+            assert (fallback / "labeling_output" / "labels").is_dir()
+            assert (fallback / "last_session.json").exists()
+        finally:
+            install.chmod(0o755)
+
+    def test_is_writable_detects_read_only(self, tmp_path):
+        import app as app_module
+        ro = tmp_path / "ro"
+        ro.mkdir()
+        ro.chmod(0o555)
+        try:
+            assert app_module._is_writable(tmp_path) is True
+            assert app_module._is_writable(ro) is False
+        finally:
+            ro.chmod(0o755)
+
+    def test_write_probe_leaves_nothing_behind(self, tmp_path):
+        import app as app_module
+        assert app_module._is_writable(tmp_path) is True
+        assert list(tmp_path.iterdir()) == []
+
+
+# ── Raw image preflight ──
+
+class TestRawPreflight:
+    def test_raw_without_rawpy_fails_before_starting(self, client, tmp_path, monkeypatch):
+        import app as app_module
+        raw_dir = tmp_path / "raws"
+        raw_dir.mkdir()
+        (raw_dir / "shot_001.dng").write_bytes(b"not really a dng")
+
+        monkeypatch.setattr(app_module, "raw_support_available", lambda: False)
+
+        resp = client.post("/api/prepare/start", json={
+            "input_dir": str(raw_dir), "output_dir": str(tmp_path / "out"), "fps": 1,
+        })
+        assert resp.status_code == 400
+        assert "rawpy" in resp.get_json()["error"]
+
+        # The job must not have been marked running
+        assert client.get("/api/prepare/status").get_json()["status"] == "idle"
+
+    def test_empty_folder_still_reports_no_media(self, client, tmp_path):
+        empty = tmp_path / "empty"
+        empty.mkdir()
+        resp = client.post("/api/prepare/start", json={
+            "input_dir": str(empty), "output_dir": str(tmp_path / "out"), "fps": 1,
+        })
+        assert resp.status_code == 400
+        assert "No video or raw image" in resp.get_json()["error"]
+
+
 # ── Point annotations ──
 
 class TestPointAnnotations:

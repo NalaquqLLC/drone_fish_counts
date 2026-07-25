@@ -12,7 +12,9 @@ Provides a web UI with:
 import csv
 import io
 import json
+import os
 import sys
+import tempfile
 import threading
 import uuid
 import webbrowser
@@ -28,6 +30,7 @@ from video_utils import (
     flatten_output,
     list_raw_images,
     list_videos,
+    raw_support_available,
 )
 
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".tiff", ".tif", ".webp"}
@@ -41,15 +44,70 @@ PALETTE = [
 ]
 
 
-def _app_dir() -> Path:
-    """Directory where the app itself lives — used for persisting last session."""
+def _install_dir() -> Path:
+    """Directory the app is running from — next to the .exe when frozen."""
     if getattr(sys, "frozen", False):
         return Path(sys.executable).parent
     return Path(__file__).parent
 
 
+def _user_data_dir() -> Path:
+    """Per-user writable location, used when the install dir is read-only."""
+    if sys.platform == "win32":
+        base = os.environ.get("LOCALAPPDATA") or os.environ.get("APPDATA")
+        if base:
+            return Path(base) / "FishLabeler"
+    elif sys.platform == "darwin":
+        return Path.home() / "Library" / "Application Support" / "FishLabeler"
+    else:
+        xdg = os.environ.get("XDG_DATA_HOME")
+        if xdg:
+            return Path(xdg) / "fishlabeler"
+    return Path.home() / ".local" / "share" / "fishlabeler"
+
+
+def _is_writable(path: Path) -> bool:
+    """True if we can actually create a file in `path`.
+
+    Checked by writing rather than by inspecting permission bits, which lie
+    on network shares and under Windows Controlled Folder Access.
+    """
+    try:
+        path.mkdir(parents=True, exist_ok=True)
+        probe = path / f".fishlabeler_write_test_{os.getpid()}"
+        probe.touch()
+        probe.unlink()
+        return True
+    except OSError:
+        return False
+
+
+_data_dir: Path | None = None
+
+
+def _app_dir() -> Path:
+    """Writable directory for session state, logs, and labeling output.
+
+    Prefers the folder the app runs from, so a portable copy on a USB stick or
+    in a project folder keeps everything together and matches the docs. Falls
+    back to a per-user data directory when that folder can't be written to —
+    Program Files, a locked-down network share, a write-protected drive. Without
+    this the app died on startup in those locations instead of degrading.
+    """
+    global _data_dir
+    if _data_dir is None:
+        for candidate in (_install_dir(), _user_data_dir()):
+            if _is_writable(candidate):
+                _data_dir = candidate
+                break
+        else:
+            # Nothing writable: keep the app usable for this session at least.
+            _data_dir = Path(tempfile.mkdtemp(prefix="fishlabeler_"))
+    return _data_dir
+
+
 def _default_output_dir() -> Path:
-    """Fixed output directory, always sibling to the app or .exe."""
+    """Fixed output directory, always inside the resolved data directory."""
     return _app_dir() / "labeling_output"
 
 
@@ -350,6 +408,16 @@ def create_app():
         if not videos and not raws:
             return jsonify({"error": f"No video or raw image files found in {in_path}"}), 400
 
+        # Fail up front rather than partway through a long job — rawpy is
+        # imported lazily inside the worker thread.
+        if raws and not raw_support_available():
+            return jsonify({
+                "error": (
+                    f"Found {len(raws)} raw image file(s), but raw conversion is unavailable. "
+                    "Install the dependencies with: pip install rawpy Pillow"
+                )
+            }), 400
+
         total_items = len(videos) + len(raws)
 
         with prepare_lock:
@@ -374,6 +442,7 @@ def create_app():
             try:
                 out_path.mkdir(parents=True, exist_ok=True)
                 total_frames = 0
+                raw_failed: list[tuple[str, str]] = []
 
                 if videos:
                     video_summary = extract_batch(in_path, out_path, fps=fps, progress_callback=on_video_progress)
@@ -398,6 +467,7 @@ def create_app():
 
                     result = convert_raw_batch(in_path, out_path, progress_callback=on_raw_progress)
                     total_frames += result["raw_count"]
+                    raw_failed = result["failed"]
 
                 if flatten:
                     _update_prepare(status="running", message="Organizing files…")
@@ -409,9 +479,15 @@ def create_app():
                 if raws:
                     parts.append(f"{len(raws)} raw image{'s' if len(raws) != 1 else ''}")
                 summary = " and ".join(parts)
+                note = ""
+                if raw_failed:
+                    names = ", ".join(n for n, _ in raw_failed[:3])
+                    if len(raw_failed) > 3:
+                        names += f" and {len(raw_failed) - 3} more"
+                    note = f" Skipped {len(raw_failed)} unreadable raw file(s): {names}."
                 _update_prepare(
                     status="done",
-                    message=f"Done! Processed {summary}. Images saved to {out_path}",
+                    message=f"Done! Processed {summary}.{note} Images saved to {out_path}",
                     output_dir=str(out_path),
                     overall_progress=1.0,
                     frames_done=total_frames,
@@ -713,12 +789,17 @@ def main():
     import logging
 
     port = 5555
-    log_file = _app_dir() / "fishlabeler.log"
-    logging.basicConfig(
-        filename=str(log_file),
-        level=logging.DEBUG,
-        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
-    )
+    data_dir = _app_dir()
+    fmt = "%(asctime)s %(levelname)s %(name)s: %(message)s"
+
+    # Logging must never be the reason the app fails to start. If the log file
+    # can't be opened, fall back to the console and keep going.
+    try:
+        logging.basicConfig(filename=str(data_dir / "fishlabeler.log"), level=logging.DEBUG, format=fmt)
+    except OSError as e:
+        logging.basicConfig(stream=sys.stderr, level=logging.DEBUG, format=fmt)
+        logging.getLogger("fishlabeler").warning("Could not open log file: %s", e)
+
     logger = logging.getLogger("fishlabeler")
 
     try:
@@ -729,12 +810,18 @@ def main():
 
     logger.info("Templates: %s", app.template_folder)
     logger.info("Static: %s", app.static_folder)
-    logger.info("App dir: %s", _app_dir())
+    logger.info("Install dir: %s", _install_dir())
+    logger.info("Data dir: %s", data_dir)
     logger.info("Bundle dir: %s", _bundle_dir())
 
     Timer(1.5, lambda: webbrowser.open(f"http://localhost:{port}")).start()
 
     print(f"Fish Labeling Tool running at http://localhost:{port}")
+    if data_dir != _install_dir():
+        # The app folder is read-only (Program Files, a locked share, a
+        # write-protected drive), so say plainly where the work is going.
+        print(f"\nThis folder is read-only, so your work is being saved to:\n  {data_dir}")
+    print(f"\nLabels and exports: {_default_output_dir()}")
     print("Press Ctrl+C to stop.")
 
     app.run(host="127.0.0.1", port=port, debug=False)

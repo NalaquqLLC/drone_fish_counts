@@ -12,24 +12,28 @@ You are drawing bounding boxes around individual fish in underwater video frames
 
 Double-click **`FishLabeler.exe`** in the root of the drive. Your web browser will open automatically to the **home screen**.
 
-If the browser doesn't open, manually go to: `http://localhost:5000`
+If the browser doesn't open, manually go to: `http://localhost:5555`
 
 ### 2. Home Screen
 
 The home screen has two options:
 
-- **Prepare Dataset** — Use this if you have raw video files and need to turn them into still images before labeling.
+- **Prepare Dataset** — Use this if you have video files or raw camera images that need turning into still images before labeling.
 - **Label Imagery** — Use this if you already have a folder of images ready to label.
 
-### 3a. Prepare Dataset (only if you have videos)
+### 3a. Prepare Dataset (only if you have videos or raw camera files)
 
 1. Click **Prepare Dataset** on the home screen.
-2. **Step 1** — Click **Browse** next to "Folder containing your videos" and select the folder with your `.mp4` / `.mov` / `.avi` files.
+2. **Step 1** — Click **Browse** next to "Folder containing your videos or raw images" and select your source folder. It can contain:
+   - **Videos** — `.mp4`, `.mov`, `.avi`, `.mkv`, `.m4v`, `.mpg`, `.mpeg`, `.wmv`
+   - **Raw camera images** — `.dng`, `.cr2`, `.cr3`, `.nef`, `.arw`, `.orf`, `.rw2`, `.raf`
 3. **Step 2** — Click **Browse** next to "Where should the images go?" and pick a destination folder. A new folder will be created if it doesn't exist.
-4. **Step 3** — Set frames per second. `1` is a good default for fish counting.
+4. **Step 3** — Set frames per second. `1` is a good default for fish counting. This applies to **videos only** — raw images are converted 1:1.
 5. Leave **"Put all frames in one folder"** checked (recommended — makes labeling easier).
 6. Click **Start Extraction**. A progress bar shows how far along it is.
 7. When it finishes, click **Label These Now** to jump straight into the labeler with the new folder pre-filled.
+
+A folder can hold both videos and raw images — both are handled in the same pass. Videos become PNG frames, raw images become JPGs. If a raw file is corrupt or unreadable it's skipped and named in the finish message, so one bad file doesn't cost you the whole run.
 
 You do not need to install ffmpeg yourself — the tool ships with everything it needs.
 
@@ -49,6 +53,8 @@ From the home screen, click **Label Imagery**. You need to configure two things:
 You can add, remove, or rename labels if needed.
 
 The **Output Directory** is managed for you — annotations, YOLO label files, and deleted images are written to a `labeling_output/` folder next to the app. You don't need to set it.
+
+If the app is in a folder Windows won't let you write to (`Program Files`, a locked-down network drive, a write-protected USB stick), it saves your work to your personal app-data folder instead and prints the location in the black console window when it starts. Look there if you can't find `labeling_output/`.
 
 Click **Start Labeling** when ready.
 
@@ -200,16 +206,20 @@ These files are written to your output directory and are ready for model trainin
 
 ## Troubleshooting
 
-**Browser didn't open** — Go to `http://localhost:5000` manually.
+**Browser didn't open** — Go to `http://localhost:5555` manually.
 
 **"No images found"** — Make sure your input directory points to a folder containing `.png` (or `.jpg`) files directly, not a folder of subfolders. If you prepared the dataset yourself, leave the "Put all frames in one folder" checkbox ticked.
 
-**"No video files found"** (Prepare Dataset) — The tool looks for `.mp4`, `.mov`, `.avi`, `.mkv`, `.m4v`, `.mpg`, `.mpeg`, and `.wmv` files directly in the folder you selected. Make sure you're pointing at the folder, not a parent folder.
+**"No video or raw image files found"** (Prepare Dataset) — The tool looks for videos (`.mp4`, `.mov`, `.avi`, `.mkv`, `.m4v`, `.mpg`, `.mpeg`, `.wmv`) and raw images (`.dng`, `.cr2`, `.cr3`, `.nef`, `.arw`, `.orf`, `.rw2`, `.raf`) directly in the folder you selected. Make sure you're pointing at the folder itself, not a parent folder.
+
+**"Raw conversion is unavailable"** — Your copy is missing the raw image libraries. If you're running the `.exe`, report this — it should be bundled. If you're running from source, install them with `pip install rawpy Pillow`.
+
+**Some raw images were skipped** — The finish message names files that couldn't be decoded. That usually means a corrupt or truncated file from the memory card. Everything else still converted.
 
 **Extraction is slow** — Long videos take a few minutes each. The progress bar updates as ffmpeg processes each video. Leave it running; you can close the browser and reopen it later — the app keeps working in the background.
 
 **Images look dark/unclear** — Use scroll-to-zoom to inspect details. Some frames from the underwater video will naturally be murky.
 
-**Lost work** — Check the `labeling_output/` folder next to the app. All annotations are saved as JSON files in the `annotations/` subfolder. YOLO labels are in `labels/`. The `progress.json` file tracks what you've completed.
+**Lost work** — Check the `labeling_output/` folder next to the app. All annotations are saved as JSON files in the `annotations/` subfolder. YOLO labels are in `labels/`. The `progress.json` file tracks what you've completed. If the app's own folder is read-only, that output goes to your personal app-data folder instead — the console window prints the exact path when the app starts.
 
 **Accidentally deleted an image** — Deleted images are moved to the `deleted/` subfolder in the `labeling_output/` folder. You can manually move them back to the input folder.
