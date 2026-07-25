@@ -40,15 +40,15 @@ Replace `C:\path\to\drone_fish_counts` with the actual location of the repo.
 
 ### Building from the WSL copy
 
-If the repo lives in WSL instead of a Windows drive, you can point PowerShell at it via the `\\wsl$` UNC path:
+If the repo lives in WSL instead of a Windows drive, you can point PowerShell at it via the `\\wsl.localhost` UNC path:
 
 ```powershell
-cd \\wsl$\Ubuntu\home\nalkuq\drone_fish_counts\scripts\labeler
+cd \\wsl.localhost\Ubuntu-20.04\home\nalkuq\drone_fish_counts\scripts\labeler
 python -m pip install -r requirements.txt pyinstaller
 python build_exe.py
 ```
 
-Swap `Ubuntu` for your distro name (`wsl -l` lists them). Builds from WSL paths work but are noticeably slower — prefer a native Windows copy for regular builds.
+Swap `Ubuntu-20.04` for your distro name if different (`wsl -l` lists them). Use `\\wsl.localhost\` — the older `\\wsl$\` form breaks in PowerShell because `$` is treated as a variable prefix. Builds from WSL paths work but are noticeably slower — prefer a native Windows copy for regular builds.
 
 ## Output
 
@@ -68,7 +68,7 @@ Copy `FishLabeler.exe` to wherever the end user should run it from (e.g., the ro
 
 ## Testing the Build
 
-Double-click the new `FishLabeler.exe`. A browser should open to `http://localhost:5000` showing the home screen with two cards: **Prepare Dataset** and **Label Imagery**.
+Double-click the new `FishLabeler.exe`. A browser should open to `http://localhost:5555` showing the home screen with two cards: **Prepare Dataset** and **Label Imagery**.
 
 Quick smoke test:
 

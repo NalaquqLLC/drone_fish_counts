@@ -9,18 +9,29 @@ Provides a web UI with:
 - YOLO detection and YOLO-seg format export
 """
 
+import csv
+import io
 import json
 import os
 import sys
+import tempfile
 import threading
 import uuid
 import webbrowser
+from functools import wraps
 from pathlib import Path
 from threading import Timer
 
 from flask import Flask, abort, jsonify, redirect, render_template, request, send_from_directory, url_for
 
-from video_utils import extract_batch, flatten_output, list_videos
+from video_utils import (
+    convert_raw_batch,
+    extract_batch,
+    flatten_output,
+    list_raw_images,
+    list_videos,
+    raw_support_available,
+)
 
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".tiff", ".tif", ".webp"}
 
@@ -33,22 +44,99 @@ PALETTE = [
 ]
 
 
-def _app_dir() -> Path:
-    """Directory where the app itself lives — used for persisting last session."""
+def _install_dir() -> Path:
+    """Directory the app is running from — next to the .exe when frozen."""
     if getattr(sys, "frozen", False):
         return Path(sys.executable).parent
     return Path(__file__).parent
 
 
+def _user_data_dir() -> Path:
+    """Per-user writable location, used when the install dir is read-only."""
+    if sys.platform == "win32":
+        base = os.environ.get("LOCALAPPDATA") or os.environ.get("APPDATA")
+        if base:
+            return Path(base) / "FishLabeler"
+    elif sys.platform == "darwin":
+        return Path.home() / "Library" / "Application Support" / "FishLabeler"
+    else:
+        xdg = os.environ.get("XDG_DATA_HOME")
+        if xdg:
+            return Path(xdg) / "fishlabeler"
+    return Path.home() / ".local" / "share" / "fishlabeler"
+
+
+def _is_writable(path: Path) -> bool:
+    """True if we can actually create a file in `path`.
+
+    Checked by writing rather than by inspecting permission bits, which lie
+    on network shares and under Windows Controlled Folder Access.
+    """
+    try:
+        path.mkdir(parents=True, exist_ok=True)
+        probe = path / f".fishlabeler_write_test_{os.getpid()}"
+        probe.touch()
+        probe.unlink()
+        return True
+    except OSError:
+        return False
+
+
+_data_dir: Path | None = None
+
+
+def _app_dir() -> Path:
+    """Writable directory for session state, logs, and labeling output.
+
+    Prefers the folder the app runs from, so a portable copy on a USB stick or
+    in a project folder keeps everything together and matches the docs. Falls
+    back to a per-user data directory when that folder can't be written to —
+    Program Files, a locked-down network share, a write-protected drive. Without
+    this the app died on startup in those locations instead of degrading.
+    """
+    global _data_dir
+    if _data_dir is None:
+        for candidate in (_install_dir(), _user_data_dir()):
+            if _is_writable(candidate):
+                _data_dir = candidate
+                break
+        else:
+            # Nothing writable: keep the app usable for this session at least.
+            _data_dir = Path(tempfile.mkdtemp(prefix="fishlabeler_"))
+    return _data_dir
+
+
 def _default_output_dir() -> Path:
-    """Fixed output directory, always sibling to the app or .exe."""
+    """Fixed output directory, always inside the resolved data directory."""
     return _app_dir() / "labeling_output"
+
+
+def _bundle_dir() -> Path:
+    """Base directory for bundled assets (templates, static)."""
+    if getattr(sys, "frozen", False):
+        return Path(sys._MEIPASS)
+    return Path(__file__).parent
 
 
 def create_app():
     """Create the Flask labeling application."""
-    app = Flask(__name__)
+    import traceback as _tb
+
+    base = _bundle_dir()
+    app = Flask(
+        __name__,
+        template_folder=str(base / "templates"),
+        static_folder=str(base / "static"),
+    )
     app.config["SESSION"] = {}  # runtime state: input_dir, output_dir, labels, colors
+
+    @app.errorhandler(Exception)
+    def handle_exception(e):
+        from werkzeug.exceptions import HTTPException
+        if isinstance(e, HTTPException):
+            return e
+        tb = _tb.format_exception(type(e), e, e.__traceback__)
+        return f"<h2>Error: {type(e).__name__}</h2><pre>{''.join(tb)}</pre>", 500
 
     def _session():
         return app.config["SESSION"]
@@ -56,6 +144,23 @@ def create_app():
     def _is_configured():
         s = _session()
         return bool(s.get("input_dir") and s.get("output_dir") and s.get("labels"))
+
+    def _requires_setup(fn):
+        """Reject API calls made before a session exists.
+
+        Without this the session lookups below raise a bare KeyError and the
+        user gets a Python traceback instead of a pointer back to Setup. This
+        happens in normal use whenever a remembered input folder has moved.
+        """
+        @wraps(fn)
+        def wrapper(*args, **kwargs):
+            if not _is_configured():
+                return jsonify({
+                    "error": "No labeling session is configured. Run Setup first.",
+                    "needs_setup": True,
+                }), 409
+            return fn(*args, **kwargs)
+        return wrapper
 
     def _last_session_path() -> Path:
         """Fixed location to remember the last-used session across restarts."""
@@ -72,6 +177,7 @@ def create_app():
         output_dir.mkdir(parents=True, exist_ok=True)
         (output_dir / "annotations").mkdir(exist_ok=True)
         (output_dir / "labels").mkdir(exist_ok=True)
+        (output_dir / "points").mkdir(exist_ok=True)
         (output_dir / "deleted").mkdir(exist_ok=True)
 
     def _restore_last_session() -> bool:
@@ -112,6 +218,9 @@ def create_app():
 
     def _labels_dir():
         return _output_path() / "labels"
+
+    def _points_dir():
+        return _output_path() / "points"
 
     def _deleted_dir():
         return _output_path() / "deleted"
@@ -163,6 +272,10 @@ def create_app():
         stem = Path(filename).stem
         return _labels_dir() / f"{stem}.txt"
 
+    def _point_path(filename: str) -> Path:
+        stem = Path(filename).stem
+        return _points_dir() / f"{stem}.txt"
+
     def _load_annotations(filename: str) -> list[dict]:
         p = _annotation_path(filename)
         if p.exists():
@@ -172,27 +285,70 @@ def create_app():
     def _save_annotations(filename: str, annotations: list[dict]) -> None:
         _annotation_path(filename).write_text(json.dumps(annotations, indent=2))
         _export_yolo(filename, annotations)
+        _export_points(filename, annotations)
+
+    def _clamp(v: float) -> float:
+        """Constrain a normalized coordinate to [0, 1].
+
+        Annotations dragged past the image edge would otherwise export
+        out-of-range values, which YOLO trainers reject.
+        """
+        return max(0.0, min(1.0, float(v)))
 
     def _export_yolo(filename: str, annotations: list[dict]) -> None:
         """Write YOLO-format label file from annotations.
 
         Box annotations emit YOLO detection format: `class cx cy w h`.
         Polygon annotations emit YOLO-seg format: `class x1 y1 x2 y2 ...`.
+
+        Point annotations are counting marks, not detections — YOLO has no
+        representation for them and a zero-area box would poison training, so
+        they are written separately by `_export_points`.
         """
         lines = []
         for ann in annotations:
             cls = ann["class_id"]
+            if ann.get("type") == "point":
+                continue
             if ann.get("type") == "polygon":
                 pts = ann.get("points", [])
                 if len(pts) < 3:
                     continue
-                coords = " ".join(f"{p[0]:.6f} {p[1]:.6f}" for p in pts)
+                coords = " ".join(f"{_clamp(p[0]):.6f} {_clamp(p[1]):.6f}" for p in pts)
                 lines.append(f"{cls} {coords}")
             else:
-                x = ann["x"] + ann["w"] / 2
-                y = ann["y"] + ann["h"] / 2
-                lines.append(f"{cls} {x:.6f} {y:.6f} {ann['w']:.6f} {ann['h']:.6f}")
+                # Clamp the box to the image first, then derive the center so
+                # the center stays consistent with the clamped width/height.
+                x0 = _clamp(ann["x"])
+                y0 = _clamp(ann["y"])
+                x1 = _clamp(ann["x"] + ann["w"])
+                y1 = _clamp(ann["y"] + ann["h"])
+                w = x1 - x0
+                h = y1 - y0
+                if w <= 0 or h <= 0:
+                    continue
+                lines.append(f"{cls} {x0 + w / 2:.6f} {y0 + h / 2:.6f} {w:.6f} {h:.6f}")
         _label_path(filename).write_text("\n".join(lines) + "\n" if lines else "")
+
+    def _export_points(filename: str, annotations: list[dict]) -> None:
+        """Write point annotations as `class_id x y` (normalized), one per line."""
+        lines = [
+            f"{ann['class_id']} {_clamp(ann['x']):.6f} {_clamp(ann['y']):.6f}"
+            for ann in annotations
+            if ann.get("type") == "point"
+        ]
+        _point_path(filename).write_text("\n".join(lines) + "\n" if lines else "")
+
+    def _count_annotations(annotations: list[dict]) -> dict[int, dict[str, int]]:
+        """Tally annotations per class, split by type."""
+        tally: dict[int, dict[str, int]] = {}
+        for ann in annotations:
+            kind = ann.get("type") or "box"
+            if kind not in ("box", "polygon", "point"):
+                kind = "box"
+            row = tally.setdefault(ann["class_id"], {"box": 0, "polygon": 0, "point": 0})
+            row[kind] += 1
+        return tally
 
     # ─── Prepare-dataset state (single-job, in-memory) ───
     prepare_state: dict = {
@@ -238,7 +394,7 @@ def create_app():
         flatten = bool(data.get("flatten", True))
 
         if not input_dir or not Path(input_dir).is_dir():
-            return jsonify({"error": f"Video folder not found: {input_dir}"}), 400
+            return jsonify({"error": f"Folder not found: {input_dir}"}), 400
         if not output_dir:
             return jsonify({"error": "Output folder is required"}), 400
         if fps <= 0:
@@ -248,8 +404,21 @@ def create_app():
         out_path = Path(output_dir).resolve()
 
         videos = list_videos(in_path)
-        if not videos:
-            return jsonify({"error": f"No video files found in {in_path}"}), 400
+        raws = list_raw_images(in_path)
+        if not videos and not raws:
+            return jsonify({"error": f"No video or raw image files found in {in_path}"}), 400
+
+        # Fail up front rather than partway through a long job — rawpy is
+        # imported lazily inside the worker thread.
+        if raws and not raw_support_available():
+            return jsonify({
+                "error": (
+                    f"Found {len(raws)} raw image file(s), but raw conversion is unavailable. "
+                    "Install the dependencies with: pip install rawpy Pillow"
+                )
+            }), 400
+
+        total_items = len(videos) + len(raws)
 
         with prepare_lock:
             if prepare_state["status"] == "running":
@@ -257,7 +426,7 @@ def create_app():
             prepare_state.update({
                 "status": "running",
                 "video_index": 0,
-                "video_total": len(videos),
+                "video_total": total_items,
                 "video_name": "",
                 "video_progress": 0.0,
                 "overall_progress": 0.0,
@@ -266,22 +435,68 @@ def create_app():
                 "output_dir": str(out_path),
             })
 
-        def on_progress(state: dict) -> None:
+        def on_video_progress(state: dict) -> None:
             _update_prepare(**state, output_dir=str(out_path))
 
         def worker():
             try:
                 out_path.mkdir(parents=True, exist_ok=True)
-                extract_batch(in_path, out_path, fps=fps, progress_callback=on_progress)
+                total_frames = 0
+                raw_failed: list[tuple[str, str]] = []
+
+                if videos:
+                    video_summary = extract_batch(in_path, out_path, fps=fps, progress_callback=on_video_progress)
+                    total_frames += video_summary["total_frames"]
+
+                if raws:
+                    def on_raw_progress(state: dict) -> None:
+                        ri = state["raw_index"]
+                        offset = len(videos)
+                        overall = (offset + ri + state["raw_progress"]) / total_items
+                        _update_prepare(
+                            video_index=offset + ri,
+                            video_total=total_items,
+                            video_name=state["raw_name"],
+                            video_progress=state["raw_progress"],
+                            overall_progress=overall,
+                            frames_done=total_frames + ri,
+                            status="running",
+                            message=state["message"],
+                            output_dir=str(out_path),
+                        )
+
+                    result = convert_raw_batch(in_path, out_path, progress_callback=on_raw_progress)
+                    total_frames += result["raw_count"]
+                    raw_failed = result["failed"]
+
                 if flatten:
                     _update_prepare(status="running", message="Organizing files…")
                     flatten_output(out_path)
-                _update_prepare(status="done", message=f"Done! Images saved to {out_path}", output_dir=str(out_path), overall_progress=1.0)
+
+                parts = []
+                if videos:
+                    parts.append(f"{len(videos)} video{'s' if len(videos) != 1 else ''}")
+                if raws:
+                    parts.append(f"{len(raws)} raw image{'s' if len(raws) != 1 else ''}")
+                summary = " and ".join(parts)
+                note = ""
+                if raw_failed:
+                    names = ", ".join(n for n, _ in raw_failed[:3])
+                    if len(raw_failed) > 3:
+                        names += f" and {len(raw_failed) - 3} more"
+                    note = f" Skipped {len(raw_failed)} unreadable raw file(s): {names}."
+                _update_prepare(
+                    status="done",
+                    message=f"Done! Processed {summary}.{note} Images saved to {out_path}",
+                    output_dir=str(out_path),
+                    overall_progress=1.0,
+                    frames_done=total_frames,
+                )
             except Exception as e:
                 _update_prepare(status="error", message=str(e))
 
         threading.Thread(target=worker, daemon=True).start()
-        return jsonify({"status": "started", "video_count": len(videos)})
+        return jsonify({"status": "started", "video_count": len(videos), "raw_count": len(raws)})
 
     @app.route("/api/prepare/status", methods=["GET"])
     def api_prepare_status():
@@ -340,8 +555,13 @@ def create_app():
                 mnt = Path("/mnt")
                 if mnt.is_dir():
                     for d in sorted(mnt.iterdir()):
-                        if d.is_dir() and any(d.iterdir()):
-                            dirs.append(str(d))
+                        # Mapped-but-disconnected drives raise OSError on access
+                        # (e.g. ENODEV under WSL) — skip anything unreadable.
+                        try:
+                            if d.is_dir() and any(d.iterdir()):
+                                dirs.append(str(d))
+                        except OSError:
+                            continue
                 home = Path.home()
                 if home.is_dir():
                     dirs.append(str(home))
@@ -392,6 +612,7 @@ def create_app():
         )
 
     @app.route("/api/images")
+    @_requires_setup
     def api_images():
         images = _list_images()
         progress = _load_progress()
@@ -404,17 +625,20 @@ def create_app():
         })
 
     @app.route("/api/image/<path:filename>")
+    @_requires_setup
     def api_image(filename: str):
         if not (_input_path() / filename).is_file():
             abort(404)
         return send_from_directory(str(_input_path()), filename)
 
     @app.route("/api/annotations/<path:filename>", methods=["GET"])
+    @_requires_setup
     def api_get_annotations(filename: str):
         annotations = _load_annotations(filename)
         return jsonify({"filename": filename, "annotations": annotations})
 
     @app.route("/api/annotations/<path:filename>", methods=["POST"])
+    @_requires_setup
     def api_save_annotations(filename: str):
         data = request.get_json()
         annotations = data.get("annotations", [])
@@ -425,6 +649,7 @@ def create_app():
         return jsonify({"status": "saved", "count": len(annotations)})
 
     @app.route("/api/annotations/<path:filename>/<box_id>", methods=["DELETE"])
+    @_requires_setup
     def api_delete_annotation(filename: str, box_id: str):
         annotations = _load_annotations(filename)
         annotations = [a for a in annotations if a.get("id") != box_id]
@@ -432,8 +657,15 @@ def create_app():
         return jsonify({"status": "deleted", "count": len(annotations)})
 
     @app.route("/api/delete-image/<path:filename>", methods=["POST"])
+    @_requires_setup
     def api_delete_image(filename: str):
         """Move an image to the deleted folder (not permanent delete)."""
+        # Strip any directory component so a crafted path can't move files
+        # from outside the input folder.
+        filename = Path(filename).name
+        if not filename:
+            return jsonify({"error": "File not found"}), 404
+
         src = _input_path() / filename
         if not src.is_file():
             return jsonify({"error": "File not found"}), 404
@@ -460,6 +692,7 @@ def create_app():
         return jsonify({"status": "deleted", "filename": filename})
 
     @app.route("/api/progress", methods=["GET"])
+    @_requires_setup
     def api_get_progress():
         images = _list_images()
         progress = _load_progress()
@@ -474,6 +707,7 @@ def create_app():
         })
 
     @app.route("/api/progress/<path:filename>", methods=["POST"])
+    @_requires_setup
     def api_update_progress(filename: str):
         data = request.get_json()
         status = data.get("status")
@@ -487,14 +721,18 @@ def create_app():
         return jsonify({"status": "updated"})
 
     @app.route("/api/export", methods=["POST"])
+    @_requires_setup
     def api_export():
-        """Re-export all annotations to YOLO format."""
+        """Re-export all annotations to YOLO format, points, and counts."""
         images = _list_images()
         exported = 0
+        per_image_counts: list[tuple[str, dict[int, dict[str, int]]]] = []
         for img_name in images:
             annotations = _load_annotations(img_name)
             if annotations:
                 _export_yolo(img_name, annotations)
+                _export_points(img_name, annotations)
+                per_image_counts.append((img_name, _count_annotations(annotations)))
                 exported += 1
 
         s = _session()
@@ -514,19 +752,76 @@ def create_app():
             f"names:\n"
             + "".join(f"  {i}: {name}\n" for i, name in sorted(labels.items()))
         )
-        return jsonify({"status": "exported", "count": exported})
+
+        # Per-image tally so counting work is usable without parsing labels.
+        # Points, boxes and masks are broken out because a point is a count
+        # while the other two are training annotations that happen to imply one.
+        totals = {i: 0 for i in labels}
+        point_totals = {i: 0 for i in labels}
+        buf = io.StringIO()
+        writer = csv.writer(buf, lineterminator="\n")
+        writer.writerow(["image", "class_id", "class_name", "points", "boxes", "polygons", "total"])
+        for img_name, tally in per_image_counts:
+            for class_id in sorted(tally):
+                c = tally[class_id]
+                total = c["point"] + c["box"] + c["polygon"]
+                writer.writerow([
+                    img_name, class_id, labels.get(class_id, f"class_{class_id}"),
+                    c["point"], c["box"], c["polygon"], total,
+                ])
+                if class_id in totals:
+                    totals[class_id] += total
+                    point_totals[class_id] += c["point"]
+        (_output_path() / "counts.csv").write_text(buf.getvalue())
+
+        return jsonify({
+            "status": "exported",
+            "count": exported,
+            "totals": {labels[i]: totals[i] for i in sorted(totals)},
+            "point_totals": {labels[i]: point_totals[i] for i in sorted(point_totals)},
+        })
 
     return app
 
 
 def main():
     """Entry point — launch the labeling tool."""
-    port = 5000
-    app = create_app()
+    import logging
+
+    port = 5555
+    data_dir = _app_dir()
+    fmt = "%(asctime)s %(levelname)s %(name)s: %(message)s"
+
+    # Logging must never be the reason the app fails to start. If the log file
+    # can't be opened, fall back to the console and keep going.
+    try:
+        logging.basicConfig(filename=str(data_dir / "fishlabeler.log"), level=logging.DEBUG, format=fmt)
+    except OSError as e:
+        logging.basicConfig(stream=sys.stderr, level=logging.DEBUG, format=fmt)
+        logging.getLogger("fishlabeler").warning("Could not open log file: %s", e)
+
+    logger = logging.getLogger("fishlabeler")
+
+    try:
+        app = create_app()
+    except Exception:
+        logger.exception("Failed to create app")
+        raise
+
+    logger.info("Templates: %s", app.template_folder)
+    logger.info("Static: %s", app.static_folder)
+    logger.info("Install dir: %s", _install_dir())
+    logger.info("Data dir: %s", data_dir)
+    logger.info("Bundle dir: %s", _bundle_dir())
 
     Timer(1.5, lambda: webbrowser.open(f"http://localhost:{port}")).start()
 
     print(f"Fish Labeling Tool running at http://localhost:{port}")
+    if data_dir != _install_dir():
+        # The app folder is read-only (Program Files, a locked share, a
+        # write-protected drive), so say plainly where the work is going.
+        print(f"\nThis folder is read-only, so your work is being saved to:\n  {data_dir}")
+    print(f"\nLabels and exports: {_default_output_dir()}")
     print("Press Ctrl+C to stop.")
 
     app.run(host="127.0.0.1", port=port, debug=False)

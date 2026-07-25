@@ -3,11 +3,13 @@
 const LABELS = {};
 const COLORS = {};
 
-// Parse label data from DOM
+// Parse label data from DOM. Read the color from data-color rather than the
+// swatch's inline style — the CSSOM normalizes "#e6194b" to "rgb(230, 25, 75)",
+// which breaks any string math on the value.
 document.querySelectorAll(".species-btn").forEach(btn => {
     const id = parseInt(btn.dataset.classId);
     LABELS[id] = btn.textContent.trim().split("\n")[0].trim();
-    COLORS[id] = btn.querySelector(".color-swatch").style.background;
+    COLORS[id] = btn.dataset.color;
 });
 
 // --- State ---
@@ -19,8 +21,9 @@ let selectedClassId = 0;
 let selectedAnnId = null;
 let isDirty = false;
 
-// Tool mode: "box" or "polygon"
-let toolMode = "box";
+// Tool mode: "polygon" | "box" | "point". Polygon is the default because
+// segmentation masks are the primary annotation type for this dataset.
+let toolMode = "polygon";
 
 // Drawing state (box)
 let isDrawing = false;
@@ -46,6 +49,10 @@ let isVertexDragging = false;
 let vertexDragAnn = null;
 let vertexDragIdx = -1;
 
+// Point drag state
+let isMovingPoint = false;
+let movePointAnn = null;
+
 // Image and canvas
 const canvas = document.getElementById("canvas");
 const ctx = canvas.getContext("2d");
@@ -62,6 +69,9 @@ let panStart = null;
 // DOM elements
 const annotationsList = document.getElementById("annotations-list");
 const noAnnotations = document.getElementById("no-annotations");
+const countsList = document.getElementById("counts-list");
+const noCounts = document.getElementById("no-counts");
+const modeHint = document.getElementById("mode-hint");
 const imageCounter = document.getElementById("image-counter");
 const filenameDisplay = document.getElementById("filename-display");
 const statusMsg = document.getElementById("status-message");
@@ -71,6 +81,14 @@ const statusMsg = document.getElementById("status-message");
 async function init() {
     const resp = await fetch("/api/images");
     const data = await resp.json();
+
+    // Session went away (e.g. the remembered input folder moved) — the page
+    // loaded but the API can't serve it. Send the user back to Setup.
+    if (data.needs_setup) {
+        window.location.href = "/setup";
+        return;
+    }
+
     images = data.images;
 
     if (images.length === 0) {
@@ -80,6 +98,9 @@ async function init() {
 
     // Select first label button
     document.querySelector(".species-btn").classList.add("active");
+
+    // Sync button state and hint text with the default tool mode
+    setToolMode(toolMode);
 
     await loadImage(0);
     updateProgress();
@@ -154,6 +175,8 @@ function render() {
     for (const ann of annotations) {
         if (ann.type === "polygon") {
             drawPolygon(ann, ann.id === selectedAnnId);
+        } else if (ann.type === "point") {
+            drawPoint(ann, ann.id === selectedAnnId);
         } else {
             drawBox(ann, ann.id === selectedAnnId);
         }
@@ -193,8 +216,11 @@ function drawBox(ann, selected) {
     const h = ann.h * ir.h;
     const color = COLORS[ann.class_id] || "#fff";
 
-    ctx.fillStyle = color + "22";
-    ctx.fillRect(x, y, w, h);
+    // Interior stays transparent so the fish underneath remains inspectable.
+    // A dark under-stroke keeps the outline readable over bright water.
+    ctx.strokeStyle = "rgba(0, 0, 0, 0.55)";
+    ctx.lineWidth = selected ? 5 : 4;
+    ctx.strokeRect(x, y, w, h);
 
     ctx.strokeStyle = color;
     ctx.lineWidth = selected ? 3 : 2;
@@ -239,8 +265,11 @@ function drawPolygon(ann, selected) {
     }
     ctx.closePath();
 
-    ctx.fillStyle = color + "5";
-    ctx.fill();
+    // Interior stays transparent — see drawBox.
+    ctx.strokeStyle = "rgba(0, 0, 0, 0.55)";
+    ctx.lineWidth = selected ? 5 : 4;
+    ctx.stroke();
+
     ctx.strokeStyle = color;
     ctx.lineWidth = selected ? 3 : 2;
     ctx.stroke();
@@ -272,6 +301,53 @@ function drawPolygon(ann, selected) {
             ctx.fillRect(px - hs/2, py - hs/2, hs, hs);
             ctx.strokeRect(px - hs/2, py - hs/2, hs, hs);
         }
+    }
+}
+
+function drawPoint(ann, selected) {
+    const ir = getImageRect();
+    const px = ir.x + ann.x * ir.w;
+    const py = ir.y + ann.y * ir.h;
+    const color = COLORS[ann.class_id] || "#fff";
+    const r = selected ? 9 : 7;
+    const tick = r + 5;
+
+    // Crosshair arms, gapped at the center so the marked fish stays visible.
+    ctx.strokeStyle = "rgba(0, 0, 0, 0.55)";
+    ctx.lineWidth = 3.5;
+    for (let pass = 0; pass < 2; pass++) {
+        ctx.beginPath();
+        ctx.moveTo(px - tick, py); ctx.lineTo(px - r + 1, py);
+        ctx.moveTo(px + r - 1, py); ctx.lineTo(px + tick, py);
+        ctx.moveTo(px, py - tick); ctx.lineTo(px, py - r + 1);
+        ctx.moveTo(px, py + r - 1); ctx.lineTo(px, py + tick);
+        ctx.stroke();
+
+        ctx.beginPath();
+        ctx.arc(px, py, r, 0, Math.PI * 2);
+        ctx.stroke();
+
+        // Second pass draws the colored marker over the dark halo.
+        ctx.strokeStyle = color;
+        ctx.lineWidth = selected ? 2.5 : 2;
+    }
+
+    // Small centre dot marks the exact position without covering the subject.
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.arc(px, py, 1.5, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Only the selected point gets a name chip — a dense count image would be
+    // unreadable with a label on every marker.
+    if (selected) {
+        const label = LABELS[ann.class_id] || `class ${ann.class_id}`;
+        ctx.font = "bold 13px sans-serif";
+        const textW = ctx.measureText(label).width + 8;
+        ctx.fillStyle = color;
+        ctx.fillRect(px + tick + 2, py - 10, textW, 20);
+        ctx.fillStyle = "#fff";
+        ctx.fillText(label, px + tick + 6, py + 4);
     }
 }
 
@@ -307,9 +383,43 @@ function drawInProgressPolygon() {
 
 // --- Annotations list ---
 
+const TYPE_SUFFIX = { polygon: " (mask)", point: " (point)" };
+
+function renderCounts() {
+    countsList.innerHTML = "";
+
+    const tally = new Map();
+    for (const ann of annotations) {
+        tally.set(ann.class_id, (tally.get(ann.class_id) || 0) + 1);
+    }
+
+    noCounts.style.display = tally.size ? "none" : "block";
+
+    for (const classId of [...tally.keys()].sort((a, b) => a - b)) {
+        const li = document.createElement("li");
+
+        const swatch = document.createElement("span");
+        swatch.className = "color-swatch";
+        swatch.style.background = COLORS[classId] || "#fff";
+        li.appendChild(swatch);
+
+        const name = document.createElement("span");
+        name.textContent = LABELS[classId] || `class ${classId}`;
+        li.appendChild(name);
+
+        const n = document.createElement("span");
+        n.className = "count-value";
+        n.textContent = tally.get(classId);
+        li.appendChild(n);
+
+        countsList.appendChild(li);
+    }
+}
+
 function renderAnnotationsList() {
     annotationsList.innerHTML = "";
     noAnnotations.style.display = annotations.length ? "none" : "block";
+    renderCounts();
 
     for (const ann of annotations) {
         const li = document.createElement("li");
@@ -322,8 +432,7 @@ function renderAnnotationsList() {
 
         const text = document.createElement("span");
         const name = LABELS[ann.class_id] || `class ${ann.class_id}`;
-        const suffix = ann.type === "polygon" ? " (mask)" : "";
-        text.textContent = name + suffix;
+        text.textContent = name + (TYPE_SUFFIX[ann.type] || "");
         li.appendChild(text);
 
         const del = document.createElement("button");
@@ -363,6 +472,8 @@ function hitTestHandles(px, py) {
     if (!selectedAnnId) return null;
     const ann = annotations.find(a => a.id === selectedAnnId);
     if (!ann) return null;
+    // Only boxes have corner handles; points and polygons have no w/h.
+    if (ann.type === "polygon" || ann.type === "point") return null;
 
     const ir = getImageRect();
     const x = ir.x + ann.x * ir.w;
@@ -390,7 +501,7 @@ function hitTestBox(px, py) {
     const ny = n.y;
     for (let i = annotations.length - 1; i >= 0; i--) {
         const ann = annotations[i];
-        if (ann.type === "polygon") continue;
+        if (ann.type === "polygon" || ann.type === "point") continue;
         if (nx >= ann.x && nx <= ann.x + ann.w &&
             ny >= ann.y && ny <= ann.y + ann.h) {
             return ann;
@@ -417,6 +528,19 @@ function hitTestPolygon(px, py) {
         const ann = annotations[i];
         if (ann.type !== "polygon") continue;
         if (pointInPolygon(n.x, n.y, ann.points || [])) return ann;
+    }
+    return null;
+}
+
+function hitTestPoint(px, py) {
+    const ir = getImageRect();
+    const r = 12;
+    for (let i = annotations.length - 1; i >= 0; i--) {
+        const ann = annotations[i];
+        if (ann.type !== "point") continue;
+        const cx = ir.x + ann.x * ir.w;
+        const cy = ir.y + ann.y * ir.h;
+        if (Math.hypot(px - cx, py - cy) < r) return ann;
     }
     return null;
 }
@@ -462,34 +586,72 @@ canvas.addEventListener("mousedown", (e) => {
         return;
     }
 
-    // Click on an existing polygon selects it
-    const polyHit = hitTestPolygon(pos.x, pos.y);
-    if (polyHit) {
-        selectedAnnId = polyHit.id;
+    // Points are small, so test them before the larger shapes — otherwise a
+    // point sitting inside a box or mask could never be selected.
+    const pointHit = hitTestPoint(pos.x, pos.y);
+    if (pointHit) {
+        if (pointHit.id === selectedAnnId) {
+            isMovingPoint = true;
+            movePointAnn = pointHit;
+            return;
+        }
+        selectedAnnId = pointHit.id;
         render();
         renderAnnotationsList();
         return;
     }
 
-    const boxHit = hitTestBox(pos.x, pos.y);
-    if (boxHit) {
-        if (boxHit.id === selectedAnnId) {
-            isMoving = true;
-            moveAnn = boxHit;
-            const norm = canvasToNorm(pos.x, pos.y);
-            moveOffset = {
-                x: norm.x - boxHit.x,
-                y: norm.y - boxHit.y,
-            };
+    // In point mode, clicking a mask or box would otherwise select it instead
+    // of dropping a count marker inside it. Those shapes stay selectable from
+    // the annotations list.
+    if (toolMode !== "point") {
+        // Click on an existing polygon selects it
+        const polyHit = hitTestPolygon(pos.x, pos.y);
+        if (polyHit) {
+            selectedAnnId = polyHit.id;
+            render();
+            renderAnnotationsList();
             return;
         }
-        selectedAnnId = boxHit.id;
-        render();
-        renderAnnotationsList();
-        return;
+
+        const boxHit = hitTestBox(pos.x, pos.y);
+        if (boxHit) {
+            if (boxHit.id === selectedAnnId) {
+                isMoving = true;
+                moveAnn = boxHit;
+                const norm = canvasToNorm(pos.x, pos.y);
+                moveOffset = {
+                    x: norm.x - boxHit.x,
+                    y: norm.y - boxHit.y,
+                };
+                return;
+            }
+            selectedAnnId = boxHit.id;
+            render();
+            renderAnnotationsList();
+            return;
+        }
     }
 
     // Empty area — tool-dependent behavior
+    if (toolMode === "point") {
+        const norm = canvasToNorm(pos.x, pos.y);
+        if (norm.x < 0 || norm.x > 1 || norm.y < 0 || norm.y > 1) return;
+        const id = Math.random().toString(36).substring(2, 10);
+        annotations.push({
+            id,
+            class_id: selectedClassId,
+            type: "point",
+            x: norm.x,
+            y: norm.y,
+        });
+        selectedAnnId = id;
+        isDirty = true;
+        render();
+        renderAnnotationsList();
+        return;
+    }
+
     if (toolMode === "polygon") {
         const norm = canvasToNorm(pos.x, pos.y);
         // Only add the point if it's within the image bounds
@@ -516,6 +678,15 @@ canvas.addEventListener("mousemove", (e) => {
             Math.max(0, Math.min(1, norm.x)),
             Math.max(0, Math.min(1, norm.y)),
         ];
+        isDirty = true;
+        render();
+        return;
+    }
+
+    if (isMovingPoint && movePointAnn) {
+        const norm = canvasToNorm(pos.x, pos.y);
+        movePointAnn.x = Math.max(0, Math.min(1, norm.x));
+        movePointAnn.y = Math.max(0, Math.min(1, norm.y));
         isDirty = true;
         render();
         return;
@@ -565,7 +736,9 @@ canvas.addEventListener("mousemove", (e) => {
     // Cursor updates
     const handleHit = hitTestHandles(pos.x, pos.y);
     const vertexHit = hitTestVertex(pos.x, pos.y);
-    if (vertexHit) {
+    if (hitTestPoint(pos.x, pos.y)) {
+        canvas.style.cursor = "pointer";
+    } else if (vertexHit) {
         canvas.style.cursor = "grab";
     } else if (handleHit) {
         const cursors = { nw: "nw-resize", ne: "ne-resize", sw: "sw-resize", se: "se-resize" };
@@ -623,6 +796,12 @@ canvas.addEventListener("mouseup", (e) => {
         isVertexDragging = false;
         vertexDragAnn = null;
         vertexDragIdx = -1;
+        return;
+    }
+
+    if (isMovingPoint) {
+        isMovingPoint = false;
+        movePointAnn = null;
         return;
     }
 });
@@ -702,6 +881,9 @@ canvas.addEventListener("dblclick", () => {
         finalizePolygon();
         return;
     }
+    // In point mode a double-click is two deliberate counts, not a request to
+    // reset the view — resetting zoom mid-count would be disruptive.
+    if (toolMode === "point") return;
     zoom = 1;
     panX = 0;
     panY = 0;
@@ -782,7 +964,12 @@ async function exportYolo() {
     if (isDirty) await saveAnnotations();
     const resp = await fetch("/api/export", { method: "POST" });
     const data = await resp.json();
-    showStatus(`Exported ${data.count} labeled images to YOLO format`, "success");
+    const counted = Object.entries(data.point_totals || {})
+        .filter(([, n]) => n > 0)
+        .map(([name, n]) => `${name}: ${n}`)
+        .join(", ");
+    const suffix = counted ? ` — points counted (${counted})` : "";
+    showStatus(`Exported ${data.count} labeled images to YOLO format${suffix}`, "success");
 }
 
 // --- Status message ---
@@ -797,8 +984,14 @@ function showStatus(msg, type) {
 
 // --- Button handlers ---
 
+const MODE_HINTS = {
+    polygon: "Click to add points around the fish; double-click or Enter to close the mask.",
+    box: "Drag a box around the fish. Drag corners to resize, drag the middle to move.",
+    point: "Click each fish once to count it. Drag a marker to nudge it, Del to remove.",
+};
+
 function setToolMode(mode) {
-    if (mode !== "box" && mode !== "polygon") return;
+    if (!(mode in MODE_HINTS)) return;
     // Cancel any in-progress polygon when switching away
     if (toolMode === "polygon" && mode !== "polygon") {
         polyPoints = [];
@@ -808,6 +1001,7 @@ function setToolMode(mode) {
     document.querySelectorAll(".mode-btn").forEach(b => {
         b.classList.toggle("active", b.dataset.mode === mode);
     });
+    if (modeHint) modeHint.textContent = MODE_HINTS[mode];
     render();
 }
 
@@ -917,6 +1111,10 @@ document.addEventListener("keydown", (e) => {
     }
     if (e.key === "p" && !e.ctrlKey && !e.metaKey) {
         setToolMode("polygon");
+        return;
+    }
+    if (e.key === "c" && !e.ctrlKey && !e.metaKey) {
+        setToolMode("point");
         return;
     }
 

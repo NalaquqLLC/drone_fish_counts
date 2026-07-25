@@ -1,5 +1,38 @@
 # Changelog
 
+## 2026-07-25 (raw images and read-only install locations)
+- **Fixed: the app died on startup when installed somewhere read-only.** `_app_dir()` returned the folder holding the `.exe`, and the app writes `fishlabeler.log`, `last_session.json`, and `labeling_output/` there. In `Program Files`, on a locked network share, or on a write-protected drive, the very first statement in `main()` — `logging.basicConfig(filename=...)` — raised `PermissionError` before Flask started, so the console window closed with nothing the student could read
+  - The data location is now resolved at runtime: the install folder if writable (keeps portable USB copies working), otherwise a per-user app-data folder (`%LOCALAPPDATA%\FishLabeler` on Windows), with a temp directory as a last resort
+  - Writability is tested by actually creating a file, since permission bits lie on network shares and under Windows Controlled Folder Access
+  - Logging failures can no longer stop startup — the log falls back to the console
+  - The console prints the data location on startup whenever it isn't the install folder
+- Raw image support is now documented in the README and labeling guide (extensions, dependencies, mixed video/raw folders) — it shipped undocumented
+- `scripts/extract_frames.py` handles raw images. It previously reported "No video files found" for a folder of DNGs and ignored them entirely
+- Both the app and the CLI check for `rawpy`/`Pillow` up front and name the install command, instead of failing partway through a long job with an `ImportError` from a worker thread
+- A raw file that can't be decoded is now skipped and reported rather than aborting the batch — a single corrupt card image used to end the run with a `LibRawIOError` traceback
+- Corrected stale `localhost:5000` references in the docs; the app has been on port 5555 since the packaging fixes
+
+## 2026-07-25 (later)
+- Annotation interiors are now **transparent** — boxes and masks draw as outlines only, so the labeled fish stays visible while you inspect it
+  - Root cause of the white fill: label colors were read from the swatch's inline style, which the CSSOM normalizes from `#e6194b` to `rgb(230, 25, 75)`. The code then appended an alpha suffix (`color + "22"`), producing an invalid color string. Canvas silently ignores an invalid `fillStyle` assignment and keeps the previous value — which was the `#fff` left over from drawing handles and label text. Colors now come from a `data-color` attribute so they stay hex
+  - Outlines gained a dark under-stroke so they stay readable over bright water
+- The labeler now **defaults to Polygon (segmentation mask) mode** instead of Box; the mode toggle is reordered Polygon / Box / Point
+- Added a **Point** annotation type (press `C`) for counting fish rather than labeling them
+  - Click to place a crosshair marker, drag to nudge, `Delete` to remove
+  - Point mode ignores existing boxes and masks so you can count over an already-annotated image
+  - New **Counts** sidebar panel shows a live per-species tally for the current image
+  - Points export to `points/*.txt` (`class_id x y`, normalized) and a per-image `counts.csv`; they are deliberately excluded from `labels/*.txt` because a zero-area box would corrupt YOLO training
+  - Double-click no longer resets zoom in Point mode — there it counts two fish
+- Updated README and labeling guide for the three annotation modes and the counting output
+
+## 2026-07-25
+- Fixed `/api/list-dir` returning a 500 when enumerating `/mnt` on WSL — a mapped-but-disconnected drive raised `OSError` and broke the whole folder picker
+- Data APIs now return `409 {"needs_setup": true}` instead of a 500 traceback when no session is configured; the labeling page redirects to Setup when it sees that flag, which is what happens when a remembered input folder has moved
+- Frame counts now come from ffmpeg's own `frame=` progress output instead of counting PNGs on disk, so re-extracting into a folder that already has frames no longer reports inflated totals
+- YOLO export clamps coordinates to 0–1; boxes are clamped at the edges and the center re-derived so it stays consistent with the clamped width/height, and fully offscreen boxes are dropped rather than exported as zero-area
+- `/api/delete-image` strips directory components from the filename so a crafted path can't move files from outside the input folder
+- Added regression tests for all of the above (50 tests total)
+
 ## 2026-04-14
 - Added a **home screen** as the app's landing page with two modes: **Prepare Dataset** and **Label Imagery**
 - Added a **Prepare Dataset** flow that turns a folder of videos into a folder of still images directly from the UI

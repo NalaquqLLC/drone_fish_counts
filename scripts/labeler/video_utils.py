@@ -1,12 +1,15 @@
-"""Video-to-frame extraction utilities for the labeling tool.
+"""Video-to-frame and raw-image conversion utilities for the labeling tool.
 
 Uses a bundled ffmpeg binary via `imageio-ffmpeg` so end users don't need to
 install ffmpeg themselves. Falls back to the system `ffmpeg` on PATH if the
 package isn't available (useful for dev without the dep installed).
+
+Raw image conversion (DNG, CR2, NEF, etc.) uses `rawpy` + `Pillow`.
 """
 
 from __future__ import annotations
 
+import importlib
 import re
 import shutil
 import subprocess
@@ -14,6 +17,7 @@ from pathlib import Path
 from typing import Callable, Optional
 
 VIDEO_EXTENSIONS = {".mp4", ".mov", ".avi", ".mkv", ".m4v", ".mpg", ".mpeg", ".wmv"}
+RAW_EXTENSIONS = {".dng", ".cr2", ".cr3", ".nef", ".arw", ".orf", ".rw2", ".raf"}
 
 
 def get_ffmpeg_exe() -> str:
@@ -98,13 +102,20 @@ def extract_frames_from_video(
     assert proc.stdout is not None
 
     # ffmpeg -progress emits key=value lines; `out_time_ms` is the current
-    # output time in microseconds (confusingly named).
+    # output time in microseconds (confusingly named) and `frame` is the
+    # running count of frames written.
+    frames_written = None
     for line in proc.stdout:
         line = line.strip()
         if not line or "=" not in line:
             continue
         key, _, value = line.partition("=")
-        if key == "out_time_ms" and progress_callback is not None:
+        if key == "frame":
+            try:
+                frames_written = int(value)
+            except ValueError:
+                pass
+        elif key == "out_time_ms" and progress_callback is not None:
             try:
                 seconds = int(value) / 1_000_000
                 progress_callback(seconds, duration)
@@ -116,6 +127,10 @@ def extract_frames_from_video(
         err = proc.stderr.read() if proc.stderr else ""
         raise RuntimeError(f"ffmpeg failed on {video_path.name}: {err.strip()}")
 
+    # Count what this run wrote, not what happens to be sitting in the folder —
+    # a previous extraction at a different fps leaves stale frames behind.
+    if frames_written is not None:
+        return frames_written
     return len(list(dest.glob("*.png")))
 
 
@@ -180,6 +195,95 @@ def extract_batch(
 
     emit(total - 1, videos[-1].name, 1.0, total_frames, "done", f"Extracted {total_frames} frames from {total} videos")
     return {"video_count": total, "total_frames": total_frames, "output_dir": str(output_dir)}
+
+
+def list_raw_images(image_dir: Path) -> list[Path]:
+    """Return sorted list of raw image files (DNG, CR2, etc.) in a directory."""
+    return sorted(
+        p for p in image_dir.iterdir()
+        if p.is_file() and p.suffix.lower() in RAW_EXTENSIONS
+    )
+
+
+def raw_support_available() -> bool:
+    """True if raw conversion dependencies (`rawpy`, `Pillow`) are importable.
+
+    Actually imports rather than checking for the module spec — both ship
+    native extensions that can be present but unloadable.
+    """
+    try:
+        importlib.import_module("rawpy")
+        importlib.import_module("PIL.Image")
+        return True
+    except ImportError:
+        return False
+
+
+def convert_raw_image(raw_path: Path, output_dir: Path, quality: int = 95) -> Path:
+    """Convert a single raw image to JPG. Returns the output path."""
+    import rawpy
+    from PIL import Image
+
+    with rawpy.imread(str(raw_path)) as raw:
+        rgb = raw.postprocess()
+    img = Image.fromarray(rgb)
+    dest = output_dir / f"{raw_path.stem}.jpg"
+    img.save(str(dest), "JPEG", quality=quality)
+    return dest
+
+
+def convert_raw_batch(
+    image_dir: Path,
+    output_dir: Path,
+    quality: int = 95,
+    progress_callback: Optional[Callable[[dict], None]] = None,
+) -> dict:
+    """Convert all raw images in `image_dir` to JPG in `output_dir`.
+
+    A file that can't be decoded is skipped rather than aborting the batch —
+    one corrupt card image shouldn't cost the user a long conversion run. The
+    returned dict reports `raw_count` converted and `failed` as a list of
+    (filename, error) pairs.
+    """
+    raws = list_raw_images(image_dir)
+    if not raws:
+        return {"raw_count": 0, "failed": [], "output_dir": str(output_dir)}
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    total = len(raws)
+    converted = 0
+    failed: list[tuple[str, str]] = []
+
+    for i, raw_path in enumerate(raws):
+        if progress_callback:
+            progress_callback({
+                "raw_index": i,
+                "raw_total": total,
+                "raw_name": raw_path.name,
+                "raw_progress": i / total,
+                "message": f"Converting {raw_path.name}",
+            })
+        try:
+            convert_raw_image(raw_path, output_dir, quality=quality)
+            converted += 1
+        except Exception as e:
+            # rawpy raises library-specific errors (LibRawIOError,
+            # LibRawFileUnsupportedError, ...) that share no common base.
+            failed.append((raw_path.name, f"{type(e).__name__}: {e}"))
+
+    if progress_callback:
+        note = f"Converted {converted} raw images"
+        if failed:
+            note += f" ({len(failed)} could not be read)"
+        progress_callback({
+            "raw_index": total - 1,
+            "raw_total": total,
+            "raw_name": raws[-1].name,
+            "raw_progress": 1.0,
+            "message": note,
+        })
+
+    return {"raw_count": converted, "failed": failed, "output_dir": str(output_dir)}
 
 
 def flatten_output(output_dir: Path) -> int:
