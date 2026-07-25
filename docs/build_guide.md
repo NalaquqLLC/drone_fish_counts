@@ -8,7 +8,11 @@ Install these once on the build machine:
 
 1. **Python 3.12 or newer** — [https://www.python.org/downloads/](https://www.python.org/downloads/)
    During installation, check **"Add python.exe to PATH"**.
-2. **The repository** — clone or copy `drone_fish_counts/` somewhere on the machine (a native Windows drive like `C:\` is faster than building from a WSL path).
+2. **The repository** — clone or copy `drone_fish_counts/` somewhere on the machine (a native Windows drive like `C:\` is faster than building from a WSL path):
+
+   ```powershell
+   git clone https://github.com/NalaquqLLC/drone_fish_counts.git
+   ```
 
 Verify Python is reachable from PowerShell:
 

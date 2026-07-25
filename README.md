@@ -2,6 +2,8 @@
 
 Video-to-image pipeline and labeling tool for building a YOLO object detection model to count and classify salmon from underwater video. Developed for KRITFC / Kuskokwim River monitoring by Nalaquq LLC.
 
+Repository: https://github.com/NalaquqLLC/drone_fish_counts
+
 Demo video: https://youtu.be/iGXpuL3Rk6w
 
 ## Quick Start (for students)
