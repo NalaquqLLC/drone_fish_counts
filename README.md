@@ -1,6 +1,6 @@
 # AOOS Fish Count — Training Data Pipeline
 
-Video-to-image pipeline and labeling tool for building a YOLO object detection model to count and classify salmon from underwater video. Developed for KRITFC / Kuskokwim River monitoring by Nalaquq LLC.
+Video-to-image pipeline and labeling tool for building a YOLO object detection model to count and classify salmon from video and photo data. Developed with AOOS funding by Nalaquq LLC.
 
 Repository: https://github.com/NalaquqLLC/drone_fish_counts
 
